@@ -222,8 +222,13 @@ def _id_to_name(model_id):
 
 def show_native_save(save_path):
     """Parse and display a native current_run.save file."""
-    with open(save_path) as f:
-        data = json.load(f)
+    try:
+        with open(save_path) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"{t('Error:','错误:')} Save file is not valid JSON: {save_path}")
+        print(f"  {e}")
+        sys.exit(1)
 
     print(f"\n{'═' * 60}")
     print(f"  {t('Native Save File', '游戏原生存档')}")
@@ -247,7 +252,8 @@ def show_native_save(save_path):
     if room:
         room_type = room.get("room_type", "?")
         enc = room.get("encounter_id") or room.get("event_id") or ""
-        print(f"  {t('Room','当前房间')}: {room_type}" + (f" ({_id_to_name(enc)})" if enc else ""))
+        room_type_display = t(room_type, ROOM_TYPE_ZH.get(room_type, room_type))
+        print(f"  {t('Room','当前房间')}: {room_type_display}" + (f" ({_id_to_name(enc)})" if enc else ""))
 
     visited = data.get("visited_map_coords", [])
     if visited:
@@ -388,6 +394,8 @@ def t(en, zh=None):
         return en
     if LANG == "en":
         return en
+    if LANG == "both":
+        return f"{en} / {zh}"
     return zh
 
 # Card rarities — keys match sts2 CardRarity.ToString(); ZHS from localization_zhs/gameplay_ui.json CARD_RARITY.*
@@ -415,7 +423,20 @@ CARD_KW_PREFIX_ORDER = ("Innate", "Ethereal", "Retain", "Sly")
 
 CARD_TYPE_ZH = {"Attack": "攻击", "Skill": "技能", "Power": "能力", "Status": "状态", "Curse": "诅咒"}
 NODE_TYPE_ZH = {"Monster": "怪物", "Elite": "精英", "Boss": "Boss", "RestSite": "休息处",
-                "Shop": "商店", "Treasure": "宝箱", "Event": "事件", "Unknown": "未知", "Ancient": "远古"}
+                "Shop": "商店", "Treasure": "宝箱", "Event": "事件", "Unknown": "未知", "Ancient": "远古",
+                "CombatRoom": "战斗", "EliteRoom": "精英", "BossRoom": "Boss",
+                "RestSiteRoom": "休息站", "ShopRoom": "商店", "EventRoom": "事件",
+                "TreasureRoom": "宝箱", "MapRoom": "地图"}
+ROOM_TYPE_ZH = {
+    "CombatRoom": "战斗",
+    "EventRoom": "事件",
+    "RestSiteRoom": "休息站",
+    "ShopRoom": "商店",
+    "TreasureRoom": "宝箱",
+    "BossRoom": "Boss",
+    "EliteRoom": "精英",
+    "MapRoom": "地图",
+}
 
 # ─── Game display ───
 
@@ -1308,7 +1329,7 @@ def get_input(prompt, valid_options=None, state=None, multi_select=False, multi_
                     print("  Map not available.")
             elif state:
                 ctx = state.get("context", {})
-                print(f"  {c(n(ctx.get('act_name','?')), 'bold')} Floor {ctx.get('floor','?')}")
+                print(f"  {c(n(ctx.get('act_name','?')), 'bold')} {t('Floor','层')} {ctx.get('floor','?')}")
             continue
         if raw == "save":
             if hasattr(get_input, '_save_fn'):
@@ -1370,29 +1391,46 @@ def _save_game(save_path, character, seed, action_log):
 
 def _load_game(save_path):
     """Read action replay save file. Returns (character, seed, actions)."""
-    with open(save_path) as f:
-        data = json.load(f)
+    try:
+        with open(save_path) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"{t('Error:','错误:')} Save file is not valid JSON: {save_path}")
+        print(f"  {e}")
+        sys.exit(1)
+    if "actions" not in data:
+        print(f"{t('Error:','错误:')} Not a replay save file (missing 'actions' key): {save_path}")
+        sys.exit(1)
     return data["character"], data["seed"], data["actions"]
 
 def _list_saves():
-    """List available save files."""
+    """List available save files (replay .json and native .save files)."""
     if not os.path.isdir(SAVE_DIR):
         return []
     saves = []
     for f in sorted(os.listdir(SAVE_DIR)):
+        path = os.path.join(SAVE_DIR, f)
         if f.endswith(".json"):
-            path = os.path.join(SAVE_DIR, f)
+            # Only list .json files that are replay saves (have "actions" key)
             try:
                 with open(path) as fh:
                     d = json.load(fh)
+                if "actions" not in d:
+                    continue  # skip non-replay JSON files
                 saves.append({
-                    "file": f, "path": path,
+                    "file": f, "path": path, "type": "replay",
                     "character": d.get("character", "?"),
                     "seed": d.get("seed", "?"),
                     "actions": len(d.get("actions", [])),
                 })
             except Exception:
                 pass
+        elif f.endswith(".save"):
+            # Native save files
+            saves.append({
+                "file": f, "path": path, "type": "native",
+                "character": "?", "seed": "?", "actions": "—",
+            })
     return saves
 
 class _QuitRequested(Exception):
@@ -1543,18 +1581,21 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
                         return
                 print(f"\r  {c(t('Replay complete!','回放完成!'), 'green')}" + " " * 30)
                 print()
-        print(f"\n{c('Slay the Spire 2 — Headless CLI', 'bold')}")
+        print(f"\n{c(t('Slay the Spire 2 — Headless CLI', '杀戮尖塔 2 — 无头模式'), 'bold')}")
         if native_save_path:
             p = state.get("player", {}) if state else {}
             ctx = state.get("context", {}) if state else {}
             print(f"{t('Character','角色')}: {n(p.get('name','?'))}  "
                   f"{t('Act','幕')}: {ctx.get('act','?')} ({n(ctx.get('act_name','?'))})  "
-                  f"HP: {p.get('hp','?')}/{p.get('max_hp','?')}  "
+                  f"{t('HP','生命')}: {p.get('hp','?')}/{p.get('max_hp','?')}  "
                   f"{t('Gold','金')}: {p.get('gold','?')}")
         else:
             asc_str = f"  {t('Ascension','渐进难度')}: {ascension}" if ascension > 0 else ""
             print(f"{t('Character','角色')}: {character}  {t('Seed','种子')}: {actual_seed}{asc_str}")
         print(f"{t('Type','输入')} {c('help', 'cyan')} {t('for available commands.','查看可用命令。')}\n")
+
+        _auto_last_fingerprint = None
+        _auto_stuck_count = 0
 
         while True:
             if not state:
@@ -1653,6 +1694,18 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
                         choice = str(card["index"])
                     else:
                         choice = "e"
+
+                    # Stuck detection: if state fingerprint repeats, force end_turn
+                    fp = (tuple(c.get("index") for c in hand), energy)
+                    if fp == _auto_last_fingerprint:
+                        _auto_stuck_count += 1
+                        if _auto_stuck_count >= 5:
+                            print(f"  {c(t('[auto] Stuck state detected, forcing end_turn','[auto] 检测到卡住状态，强制结束回合'), 'yellow')}")
+                            choice = "e"
+                            _auto_stuck_count = 0
+                    else:
+                        _auto_last_fingerprint = fp
+                        _auto_stuck_count = 0
                 else:
                     choice = get_input(t("Play card [index], (e)nd turn, (p0) potion", "出牌 [编号], (e)结束回合, (p0)药水"), set(valid.keys()) | {"help"}, state=state)
                     if choice == "help":
@@ -1916,7 +1969,7 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
                     elif new_deck != old_deck:
                         changes.append(f"{t('Deck','牌组')}: {old_deck} → {new_deck}")
                     if new_hp != old_hp or new_max_hp != old_max_hp:
-                        changes.append(f"HP: {old_hp}/{old_max_hp} → {new_hp}/{new_max_hp}")
+                        changes.append(f"{t('HP','生命')}: {old_hp}/{old_max_hp} → {new_hp}/{new_max_hp}")
                     if new_gold != old_gold:
                         diff = new_gold - old_gold
                         changes.append(f"{t('Gold','金')}: {'+' if diff > 0 else ''}{diff}")
@@ -1997,6 +2050,23 @@ if __name__ == "__main__":
 
     LANG = args.lang
 
+    # Mutual exclusion: conflicting flags
+    if args.load is not None:
+        if args.saves:
+            parser.error("Cannot combine --load with --saves")
+        if args.save_info is not None:
+            parser.error("Cannot combine --load with --save-info")
+        if args.continue_save is not None:
+            parser.error("Cannot combine --load with --continue")
+    if args.saves:
+        if args.save_info is not None:
+            parser.error("Cannot combine --saves with --save-info")
+        if args.continue_save is not None:
+            parser.error("Cannot combine --saves with --continue")
+    if args.save_info is not None:
+        if args.continue_save is not None:
+            parser.error("Cannot combine --save-info with --continue")
+
     if args.save_info is not None:
         p = args.save_info
         if not os.path.isabs(p):
@@ -2012,11 +2082,16 @@ if __name__ == "__main__":
         if saves:
             print(f"\n{'─' * 50}")
             for s in saves:
-                print(f"  {s['file']}  {s['character']}  seed:{s['seed']}  actions:{s['actions']}")
+                stype = s.get("type", "replay")
+                if stype == "native":
+                    print(f"  {s['file']}  [{t('native save','原生存档')}]")
+                else:
+                    print(f"  {s['file']}  {s['character']}  {t('seed','种子')}:{s['seed']}  {t('actions','步操作')}:{s['actions']}")
             print(f"{'─' * 50}")
-            print(f"  Load: python3 play.py --load saves/<file>")
+            print(f"  {t('Replay saves:','回放存档:')} python3 play.py --load saves/<file>")
+            print(f"  {t('Native saves:','原生存档:')} python3 play.py --continue saves/<file>")
         else:
-            print("No saves found.")
+            print(t("No saves found.", "没有找到存档。"))
         sys.exit(0)
 
     load_path = None
