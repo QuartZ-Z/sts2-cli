@@ -204,7 +204,7 @@ internal class LocLookup
 /// </summary>
 public class RunSimulator
 {
-    private static int _expectedSaveSchemaVersion;
+    private static int? _expectedSaveSchemaVersion;
     private static bool _expectedSaveSchemaVersionReady;
     private static readonly object _expectedSaveSchemaVersionLock = new();
 
@@ -572,9 +572,9 @@ public class RunSimulator
 
     /// <summary>
     /// Expected run save <c>schema_version</c> (lazy: first load_save only, so StartRun never fails on reflection).
-    /// Order: <c>STS2_SAVE_SCHEMA_VERSION</c> env → reflect sts2.dll → fallback with stderr warning.
+    /// Order: <c>STS2_SAVE_SCHEMA_VERSION</c> env → reflect sts2.dll → unknown, defer to SaveManager.
     /// </summary>
-    private static int GetExpectedSaveSchemaVersion()
+    private static int? GetExpectedSaveSchemaVersion()
     {
         if (_expectedSaveSchemaVersionReady)
             return _expectedSaveSchemaVersion;
@@ -588,7 +588,7 @@ public class RunSimulator
         }
     }
 
-    private static int ResolveExpectedSaveSchemaVersion()
+    private static int? ResolveExpectedSaveSchemaVersion()
     {
         var env = Environment.GetEnvironmentVariable("STS2_SAVE_SCHEMA_VERSION");
         if (!string.IsNullOrWhiteSpace(env) && int.TryParse(env.Trim(), out var envVer))
@@ -598,11 +598,10 @@ public class RunSimulator
         if (reflected.HasValue)
             return reflected.Value;
 
-        const int fallback = 16;
         Console.Error.WriteLine(
-            "[Sts2Headless] Could not read save schema from sts2.dll; using fallback " + fallback +
-            ". Set STS2_SAVE_SCHEMA_VERSION or update game DLL / resolver.");
-        return fallback;
+            "[Sts2Headless] Could not read save schema from sts2.dll; deferring schema compatibility " +
+            "to SaveManager.FromJson. Set STS2_SAVE_SCHEMA_VERSION to enforce a specific version.");
+        return null;
     }
 
     /// <summary>Find static parameterless GetLatestSchemaVersion (or close) on sts2; supports int/uint/long.</summary>
@@ -691,9 +690,9 @@ public class RunSimulator
             }
 
             var expected = GetExpectedSaveSchemaVersion();
-            if (schemaVersion != expected)
+            if (expected.HasValue && schemaVersion != expected.Value)
             {
-                error = $"expected v{expected}, got v{schemaVersion}";
+                error = $"expected v{expected.Value}, got v{schemaVersion}";
                 return false;
             }
 
