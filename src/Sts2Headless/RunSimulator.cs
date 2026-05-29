@@ -981,11 +981,18 @@ public class RunSimulator
                         target = enemies[targetIndex];
                 }
             }
-            // Fallback: auto-target first alive enemy
+            // No target_index given: only auto-target when the choice is unambiguous
+            // (a single alive enemy). With multiple enemies, picking one is a real game
+            // decision — return an error instead of silently targeting enemy 0 (#79).
             if (target == null)
             {
                 var state = CombatManager.Instance.DebugOnlyGetState();
-                target = state?.Enemies?.FirstOrDefault(e => e != null && e.IsAlive);
+                var alive = state?.Enemies?.Where(e => e != null && e.IsAlive).ToList() ?? new();
+                if (alive.Count == 1)
+                    target = alive[0];
+                else if (alive.Count > 1)
+                    return Error($"Card {card.Id.Entry} targets a single enemy (AnyEnemy); " +
+                                 $"'target_index' is required when multiple enemies are alive ({alive.Count}).");
             }
         }
         // All other target types (None, All, etc.) → leave target as null
@@ -1482,10 +1489,16 @@ public class RunSimulator
                         target = enemies[targetIdx];
                 }
             }
+            // Same single-enemy rule as play_card: only auto-target when unambiguous (#79).
             if (target == null && CombatManager.Instance.IsInProgress)
             {
                 var combatState = CombatManager.Instance.DebugOnlyGetState();
-                target = combatState?.Enemies?.FirstOrDefault(e => e != null && e.IsAlive);
+                var alive = combatState?.Enemies?.Where(e => e != null && e.IsAlive).ToList() ?? new();
+                if (alive.Count == 1)
+                    target = alive[0];
+                else if (alive.Count > 1)
+                    return Error($"Potion {potion.Id.Entry} targets a single enemy (AnyEnemy); " +
+                                 $"'target_index' is required when multiple enemies are alive ({alive.Count}).");
             }
         }
         // All other target types (None, All, etc.) → leave target as null
@@ -2521,6 +2534,22 @@ public class RunSimulator
                     catch { }
                 }
 
+                // `RandomCard` (Slippery Bridge / Overcome) carries a *deck index*, but the
+                // description template `{RandomCard}` should render that deck card's name. Resolve
+                // it to the localized name so clients can substitute it (#58). Scoped to this var
+                // name on purpose: other card vars (e.g. Wood Carvings' BirdCard/ToricCard) index
+                // a transform-target pool, not the deck, so a generic rule would mis-resolve them.
+                if (optVars != null && optVars.TryGetValue("RandomCard", out var rcVal) && rcVal is int rcIdx)
+                {
+                    try
+                    {
+                        var deck = _runState?.Players?[0]?.Deck?.Cards;
+                        if (deck != null && rcIdx >= 0 && rcIdx < deck.Count && deck[rcIdx] != null)
+                            optVars["RandomCard"] = _loc.Card(deck[rcIdx].Id.Entry);
+                    }
+                    catch { }
+                }
+
                 return new Dictionary<string, object?>
                 {
                     ["index"] = i,
@@ -2607,8 +2636,16 @@ public class RunSimulator
                     if (card != null)
                     {
                         cardCost = card.EnergyCost?.GetResolved() ?? 0;
-                        var mutable = card.ToMutable();
-                        foreach (var dv in mutable.DynamicVars.Values)
+                        // The shop entry's card can have uninitialized DynamicVars (stats: null
+                        // while after_upgrade is populated, #68). Read base stats from a fresh
+                        // ModelDb clone at the card's current upgrade level, like GetUpgradedInfo.
+                        var fresh = ModelDb.GetById<CardModel>(card.Id).ToMutable();
+                        for (int u = 0; u < card.CurrentUpgradeLevel; u++)
+                        {
+                            fresh.UpgradeInternal();
+                            fresh.FinalizeUpgradeInternal();
+                        }
+                        foreach (var dv in fresh.DynamicVars.Values)
                             stats[dv.Name.ToLowerInvariant()] = (int)dv.BaseValue;
                     }
                 }
@@ -2899,7 +2936,7 @@ public class RunSimulator
                 var dstats = new Dictionary<string, object?>();
                 try { foreach (var dv in c.DynamicVars.Values) dstats[dv.Name.ToLowerInvariant()] = (int)dv.BaseValue; } catch { }
                 var dkws = c.Keywords?.Where(k => k != CardKeyword.None).Select(k => k.ToString()).ToList();
-                return new Dictionary<string, object?>
+                var dcard = new Dictionary<string, object?>
                 {
                     ["id"] = c.Id.ToString(),
                     ["name"] = _loc.Card(c.Id.Entry),
@@ -2911,6 +2948,19 @@ public class RunSimulator
                     ["keywords"] = dkws?.Count > 0 ? dkws : null,
                     ["after_upgrade"] = GetUpgradedInfo(c),
                 };
+                // Enchantment/affliction metadata, matching the combat hand export so clients
+                // can see e.g. Slither applied to a deck card after an event (#76).
+                if (c.Enchantment != null)
+                {
+                    dcard["enchantment"] = _loc.Bilingual("enchantments", c.Enchantment.Id.Entry + ".title");
+                    try { if (c.Enchantment.Amount != 0) dcard["enchantment_amount"] = c.Enchantment.Amount; } catch { }
+                }
+                if (c.Affliction != null)
+                {
+                    dcard["affliction"] = _loc.Bilingual("afflictions", c.Affliction.Id.Entry + ".title");
+                    try { if (c.Affliction.Amount != 0) dcard["affliction_amount"] = c.Affliction.Amount; } catch { }
+                }
+                return dcard;
             }).ToList(),
         };
     }
