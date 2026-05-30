@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Events;
+using MegaCrit.Sts2.Core.Entities.Ascension;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -1702,6 +1703,36 @@ public class RunSimulator
         return DetectDecisionPoint();
     }
 
+    /// <summary>
+    /// Headless mode skips Godot transition callbacks that normally trigger between-act healing
+    /// (AncientEventModel.BeforeEventStarted). Replicates the original sts2.dll formula:
+    ///   healAmount = MaxHp - CurrentHp  (i.e. heal to full)
+    ///   if Ascension >= 2: healAmount *= 0.8
+    /// No-op if the engine already healed (missingHp &lt;= 0), so this is safe alongside any
+    /// future engine path that does fire the callback.
+    /// Adapted from PR #83 commit cf75bec by @tianyumyum.
+    /// </summary>
+    private void HealBetweenActs()
+    {
+        if (_runState == null) return;
+        var player = _runState.Players[0];
+        if (player.Creature == null) return;
+
+        var currentHp = player.Creature.CurrentHp;
+        var maxHp = player.Creature.MaxHp;
+        var missingHp = maxHp - currentHp;
+        if (missingHp <= 0) return;
+
+        decimal healAmount = missingHp;
+        if (RunManager.Instance.HasAscension((AscensionLevel)2))
+            healAmount *= 0.8m;
+
+        var newHp = currentHp + (int)Math.Ceiling(healAmount);
+        if (newHp > maxHp) newHp = maxHp;
+        SetField(player.Creature, "_currentHp", newHp);
+        Log($"Between-act heal: {currentHp} → {newHp} (missing={missingHp}, ascension2+={RunManager.Instance.HasAscension((AscensionLevel)2)})");
+    }
+
     private Dictionary<string, object?> DoProceed(Player player)
     {
         Log("Proceeding");
@@ -1712,8 +1743,15 @@ public class RunSimulator
         {
             if (combatRoom.IsPreFinished || !CombatManager.Instance.IsInProgress)
             {
+                // Final act boss → victory (same rule as DetectPostCombatState, #81).
+                if (_runState != null && _runState.CurrentActIndex >= 2)
+                {
+                    Log($"Final boss defeated via Proceed (Act {_runState.CurrentActIndex + 1}), reporting victory");
+                    return GameOverState(true);
+                }
                 RunManager.Instance.EnterNextAct().GetAwaiter().GetResult();
                 WaitForActionExecutor();
+                HealBetweenActs();
                 return DetectDecisionPoint();
             }
         }
@@ -2372,6 +2410,7 @@ public class RunSimulator
                 RunManager.Instance.EnterNextAct().GetAwaiter().GetResult();
                 _syncCtx.Pump();
                 WaitForActionExecutor();
+                HealBetweenActs();
             }
             catch (Exception ex) { Log($"EnterNextAct: {ex.Message}"); }
             return DetectDecisionPoint();
