@@ -2141,6 +2141,13 @@ public class RunSimulator
                         int repeat = tstats.TryGetValue("repeat", out var rv) && rv is int ri && ri > 0 ? ri : 1;
                         if (repeat == 1 && c.EnergyCost?.CostsX == true && pcs != null)
                             repeat = pcs.Energy;
+                        // Dismantle hits twice when the target is Vulnerable (#78). The doubled
+                        // hit count lives in Dismantle.OnPlay, not in any DynamicVar preview or
+                        // the Hook.ModifyAttackHitCount path (which needs an AttackCommand we
+                        // don't have at preview time), so it's special-cased by card entry.
+                        if (repeat == 1 && c.Id.Entry == "DISMANTLE" && tgt.Powers != null
+                            && tgt.Powers.Any(p => p?.Id.Entry == "VULNERABLE_POWER"))
+                            repeat = 2;
 
                         var row = new Dictionary<string, object?>
                         {
