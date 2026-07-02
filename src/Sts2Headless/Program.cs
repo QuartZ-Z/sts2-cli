@@ -41,6 +41,14 @@ class Program
 
     static void Main(string[] args)
     {
+        // The Python front end owns Ctrl+C and uses it to ask whether the run
+        // should be saved. Keep the simulator alive long enough to receive the
+        // subsequent JSON "quit" command containing the save path.
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+        };
+
         // Prevent unhandled exceptions from crashing the process
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {

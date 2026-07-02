@@ -1523,9 +1523,10 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
     action_log = []
     creationflags = 0
     if os.name == "nt":
-        # Keep Ctrl+C in the Python UI process. Otherwise Windows also interrupts
-        # the C# child before the UI can ask whether to save and send "quit".
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        # The simulator only communicates through redirected pipes and needs no
+        # console of its own. Detaching it from the console guarantees that Ctrl+C
+        # reaches only the Python UI, which can then send a JSON quit/save command.
+        creationflags = subprocess.CREATE_NO_WINDOW
     proc = subprocess.Popen(
         [DOTNET, "run", "--no-build", "--project", PROJECT],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
