@@ -11,6 +11,9 @@ import subprocess
 import sys
 from datetime import datetime
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "python"))
+from sts2_config import configured_launch_args, load_config  # noqa: E402
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PLAY_PY = os.path.join(ROOT, "python", "play.py")
 SAVE_DIR = os.path.join(ROOT, "saves")
@@ -130,6 +133,7 @@ def _format_entry(titles: dict[str, str], e: dict) -> str:
 
 
 def _run_play(args: list[str], lang: str) -> int:
+    # play.py loads launch_args itself; only menu selections are appended here.
     cmd = [sys.executable, PLAY_PY, "--lang", lang, *args]
     # play.py 内 ROOT 由文件路径解析，不依赖 cwd；统一设为仓库根目录便于相对路径。
     r = subprocess.run(cmd, cwd=ROOT)
@@ -211,15 +215,23 @@ def _main_interactive(lang: str) -> None:
 
 
 def main() -> None:
+    try:
+        config_args = configured_launch_args(load_config())
+    except RuntimeError as exc:
+        raise SystemExit(f"Configuration error: {exc}") from exc
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--lang", choices=["zh", "en", "both"], default="zh")
+    config_options, _ = config_parser.parse_known_args(config_args)
+
     parser = argparse.ArgumentParser(description="sts2-cli 交互式启动器")
     parser.add_argument(
         "--lang",
         choices=["zh", "en", "both"],
-        default="zh",
+        default=None,
         help="交给 play.py 的显示语言",
     )
     args = parser.parse_args()
-    _main_interactive(args.lang)
+    _main_interactive(args.lang or config_options.lang)
 
 
 if __name__ == "__main__":

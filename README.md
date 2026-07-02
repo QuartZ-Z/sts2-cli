@@ -13,7 +13,7 @@ Runs the real game engine headless in your terminal — all damage, card effects
 
 Requirements:
 - [Slay the Spire 2](https://store.steampowered.com/app/2868840/Slay_the_Spire_2/) on Steam
-- [.NET 9+ SDK](https://dotnet.microsoft.com/download)
+- [.NET 9 SDK](https://dotnet.microsoft.com/download)
 - Python 3.9+
 
 ```bash
@@ -23,6 +23,52 @@ cd sts2-cli
 ```
 
 Or just run `python3 python/play.py` — it auto-detects and sets up on first run.
+
+To check the game path, required DLLs, and .NET SDK without copying, patching,
+or building anything:
+
+```bash
+./setup.sh --validate-only /path/to/game/data
+```
+
+### Windows PowerShell
+
+Copy `config.example.json` to `config.json`, then set `game_path` to the Slay
+the Spire 2 installation directory. Backslashes in JSON must be doubled:
+
+```json
+{
+  "game_path": "D:\\SteamLibrary\\steamapps\\common\\Slay the Spire 2",
+  "launch_args": ["--lang", "zh", "--no-log"]
+}
+```
+
+`launch_args` accepts the same arguments as `python/play.py`, including
+`--lang`, `--character`, `--ascension`, `--seed`, `--auto`, and `--no-log`.
+Explicit command-line arguments and launcher menu choices take precedence.
+It may be either a command-line string or an array of tokens/argument fragments.
+
+```powershell
+Copy-Item .\config.example.json .\config.json
+.\setup.ps1
+py -3 .\launch.py
+```
+
+The path can also be supplied without a config file:
+
+```powershell
+.\setup.ps1 -GameDir "D:\SteamLibrary\steamapps\common\Slay the Spire 2"
+```
+
+Validation without changing files:
+
+```powershell
+.\setup.ps1 -ValidateOnly
+```
+
+For `setup.ps1`, path precedence is `-GameDir`, `STS2_GAME_DIR`, `config.json`,
+then platform auto-detection. Set `STS2_CLI_CONFIG` or pass `-ConfigPath` to
+use another config file.
 
 ## Play
 
@@ -119,7 +165,7 @@ sts2.dll (game engine, IL patched)
 
 需要：
 - [Slay the Spire 2](https://store.steampowered.com/app/2868840/Slay_the_Spire_2/) (Steam)
-- [.NET 9+ SDK](https://dotnet.microsoft.com/download)
+- [.NET 9 SDK](https://dotnet.microsoft.com/download)
 - Python 3.9+
 
 ```bash
@@ -129,6 +175,51 @@ cd sts2-cli
 ```
 
 或者直接运行 `python3 python/play.py`，首次会自动完成 setup。
+
+仅检查游戏目录、所需 DLL 和 .NET SDK，不复制、不打补丁、不编译：
+
+```bash
+./setup.sh --validate-only /path/to/game/data
+```
+
+### Windows PowerShell
+
+将 `config.example.json` 复制为 `config.json`，并把 `game_path` 修改为
+《杀戮尖塔 2》的安装目录。注意 JSON 中的反斜杠需要写成双反斜杠：
+
+```json
+{
+  "game_path": "D:\\SteamLibrary\\steamapps\\common\\Slay the Spire 2",
+  "launch_args": ["--lang", "zh", "--no-log"]
+}
+```
+
+`launch_args` 支持 `python/play.py` 的参数，例如 `--lang`、`--character`、
+`--ascension`、`--seed`、`--auto` 和 `--no-log`。显式命令行参数及启动器
+菜单中的选择优先级更高。它既可以写成完整命令行字符串，也可以写成参数
+分词或参数片段数组。
+
+```powershell
+Copy-Item .\config.example.json .\config.json
+.\setup.ps1
+py -3 .\launch.py
+```
+
+也可以直接通过参数指定路径：
+
+```powershell
+.\setup.ps1 -GameDir "D:\SteamLibrary\steamapps\common\Slay the Spire 2"
+```
+
+仅校验环境而不修改文件：
+
+```powershell
+.\setup.ps1 -ValidateOnly
+```
+
+对于 `setup.ps1`，路径优先级为：`-GameDir`、`STS2_GAME_DIR`、
+`config.json`、平台自动检测。可通过 `STS2_CLI_CONFIG` 或
+`-ConfigPath` 指定其他位置的配置文件。
 
 ## 玩
 

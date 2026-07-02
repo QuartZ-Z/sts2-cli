@@ -15,7 +15,10 @@ import sys
 import os
 import argparse
 import random
+import threading
+from collections import deque
 from game_log import GameLogger
+from sts2_config import configured_game_dir, configured_launch_args, load_config
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT = os.path.join(ROOT, "src", "Sts2Headless", "Sts2Headless.csproj")
@@ -51,9 +54,13 @@ def _is_wsl():
         return False
 
 
-def _find_game_dir():
+def _find_game_dir(config=None):
     """Auto-detect STS2 Steam install directory."""
     import platform
+    configured = configured_game_dir(config)
+    if configured:
+        return configured if os.path.isdir(configured) else None
+
     system = platform.system()
     candidates = []
     if system == "Darwin":
@@ -79,7 +86,13 @@ def _find_game_dir():
         for steam in ["~/.steam/steam", "~/.local/share/Steam"]:
             candidates.append(os.path.expanduser(f"{steam}/steamapps/common/Slay the Spire 2"))
     elif system == "Windows":
-        candidates = [r"C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2"]
+        for drive in "CDEFG":
+            candidates.extend([
+                rf"{drive}:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2",
+                rf"{drive}:\Program Files\Steam\steamapps\common\Slay the Spire 2",
+                rf"{drive}:\SteamLibrary\steamapps\common\Slay the Spire 2",
+                rf"{drive}:\Games\Steam\steamapps\common\Slay the Spire 2",
+            ])
 
     for d in candidates:
         if os.path.isdir(d):
@@ -120,13 +133,16 @@ def _copy_dlls(game_dir):
 
 
 def _patch_dll():
-    """Apply IL patches to sts2.dll using setup.sh (requires Mono.Cecil via dotnet)."""
-    setup_sh = os.path.join(ROOT, "setup.sh")
-    if not os.path.isfile(setup_sh):
-        print("  ⚠ setup.sh not found, skipping IL patch")
-        return
-    # Run just the patching part via setup.sh
-    subprocess.run(["bash", setup_sh], cwd=ROOT)
+    """Apply the headless IL patches without depending on a platform shell."""
+    if not DOTNET:
+        return False
+    patcher = os.path.join(ROOT, "src", "Sts2Patcher", "Sts2Patcher.csproj")
+    sts2_dll = os.path.join(LIB_DIR, "sts2.dll")
+    result = subprocess.run(
+        [DOTNET, "run", "--project", patcher, "--", sts2_dll],
+        cwd=ROOT,
+    )
+    return result.returncode == 0
 
 
 def _build():
@@ -139,7 +155,11 @@ def _build():
 
 def ensure_setup():
     """Check that everything is ready to run. Auto-setup if needed."""
-    issues = []
+    try:
+        config = load_config()
+    except RuntimeError as exc:
+        print(f"Configuration error: {exc}")
+        sys.exit(1)
 
     # Check .NET SDK
     if not DOTNET:
@@ -151,7 +171,7 @@ def ensure_setup():
     sts2_dll = os.path.join(LIB_DIR, "sts2.dll")
     if not os.path.isfile(sts2_dll):
         print("📦 Game DLLs not found. Running first-time setup...")
-        game_dir = _find_game_dir()
+        game_dir = _find_game_dir(config)
         if not game_dir:
             print("❌ Could not find Slay the Spire 2 installation.")
             print("   Install the game via Steam, then run again.")
@@ -162,10 +182,13 @@ def ensure_setup():
         if not os.path.isfile(sts2_dll):
             print("❌ Failed to copy sts2.dll")
             sys.exit(1)
+        if not _patch_dll():
+            print("❌ Failed to apply the headless IL patches.")
+            sys.exit(1)
 
-    # Set STS2_GAME_DIR env var for runtime DLL resolution (point to lib/ where DLLs were copied)
+    # Keep the original game directory available for dependencies not copied to lib/.
     if "STS2_GAME_DIR" not in os.environ:
-        os.environ["STS2_GAME_DIR"] = LIB_DIR
+        os.environ["STS2_GAME_DIR"] = configured_game_dir(config) or LIB_DIR
 
     # Check if built
     exe_dir = os.path.join(ROOT, "src", "Sts2Headless", "bin", "Debug", "net9.0")
@@ -1498,11 +1521,35 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
 
     logger = GameLogger(character, actual_seed, enabled=log)
     action_log = []
+    creationflags = 0
+    if os.name == "nt":
+        # Keep Ctrl+C in the Python UI process. Otherwise Windows also interrupts
+        # the C# child before the UI can ask whether to save and send "quit".
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(
         [DOTNET, "run", "--no-build", "--project", PROJECT],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True, bufsize=1,
+        creationflags=creationflags,
     )
+
+    # stderr is intentionally piped so normal gameplay stays clean, but a pipe must
+    # always be consumed. On Windows its small buffer otherwise fills after enough
+    # engine diagnostics and blocks the C# process (often while opening card select).
+    stderr_tail = deque(maxlen=100)
+
+    def drain_stderr():
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            stderr_tail.append(line.rstrip())
+            if os.environ.get("STS2_DEBUG"):
+                print(line, file=sys.stderr, end="")
+
+    stderr_thread = threading.Thread(
+        target=drain_stderr, name="sts2-stderr-drain", daemon=True
+    )
+    stderr_thread.start()
 
     def read():
         while True:
@@ -1518,8 +1565,13 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
         logger.log_action(cmd)
         if record and cmd.get("cmd") == "action":
             action_log.append(cmd)
-        proc.stdin.write(json.dumps(cmd) + "\n")
-        proc.stdin.flush()
+        if proc.poll() is not None or proc.stdin is None:
+            raise RuntimeError("Simulator process is no longer running")
+        try:
+            proc.stdin.write(json.dumps(cmd) + "\n")
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            raise RuntimeError("Simulator input stream is closed") from exc
         return read()
 
     # Wire send into get_input for map command
@@ -1989,7 +2041,14 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
             quit_cmd = {"cmd": "quit"}
             if quit_save_path:
                 quit_cmd["path"] = quit_save_path
-            result = send(quit_cmd)
+            try:
+                result = send(quit_cmd)
+            except RuntimeError as exc:
+                print(
+                    f"  {c(t('Could not save:','无法保存:'), 'red')} "
+                    f"{exc}"
+                )
+                break
             if result and result.get("type") == "save_error":
                 save_detail = result.get("save") or {}
                 msg = save_detail.get("message", "?")
@@ -2019,6 +2078,7 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
             proc.wait(timeout=5)
         except Exception:
             proc.kill()
+        stderr_thread.join(timeout=1)
 
     return restart_requested
 
@@ -2046,7 +2106,12 @@ if __name__ == "__main__":
                        help="Show info from a save file (provide path)")
     parser.add_argument("--continue", dest="continue_save", type=str, default=None,
                        help="Continue playing from a save file (provide path)")
-    args = parser.parse_args()
+    try:
+        config_args = configured_launch_args()
+    except RuntimeError as exc:
+        parser.error(str(exc))
+    # Explicit command-line arguments come last and therefore override config values.
+    args = parser.parse_args([*config_args, *sys.argv[1:]])
 
     LANG = args.lang
 

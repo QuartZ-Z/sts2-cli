@@ -491,6 +491,34 @@ public class RunSimulator
     }
 
     // ─── Game actions ───
+    private static void SetUpSavedSinglePlayerCompat(
+        RunManager manager, RunState runState, SerializableRun save)
+    {
+        // Mega Crit changed only the capitalization and return type:
+        // SetUpSavedSinglePlayer(...) -> Task SetUpSavedSingleplayer(...).
+        // Reflection keeps sts2-cli compatible with game DLLs from both eras.
+        var managerType = manager.GetType();
+        var method = managerType.GetMethod(
+                "SetUpSavedSingleplayer",
+                BindingFlags.Instance | BindingFlags.Public,
+                binder: null,
+                types: new[] { typeof(RunState), typeof(SerializableRun) },
+                modifiers: null)
+            ?? managerType.GetMethod(
+                "SetUpSavedSinglePlayer",
+                BindingFlags.Instance | BindingFlags.Public,
+                binder: null,
+                types: new[] { typeof(RunState), typeof(SerializableRun) },
+                modifiers: null)
+            ?? throw new MissingMethodException(
+                managerType.FullName,
+                "SetUpSavedSingleplayer(RunState, SerializableRun)");
+
+        var result = method.Invoke(manager, new object[] { runState, save });
+        if (result is Task task)
+            task.GetAwaiter().GetResult();
+    }
+
     public Dictionary<string, object?> LoadSave(string saveJson, string lang = "en")
     {
         try
@@ -517,7 +545,7 @@ public class RunSimulator
             Log($"RunState created, players={_runState.Players?.Count}");
 
             var netService = new NetSingleplayerGameService();
-            RunManager.Instance.SetUpSavedSinglePlayer(_runState, save);
+            SetUpSavedSinglePlayerCompat(RunManager.Instance, _runState, save);
             LocalContext.NetId = netService.NetId;
 
             CombatManager.Instance.TurnStarted += _ => _turnStarted.Set();
@@ -3077,6 +3105,11 @@ public class RunSimulator
         // Install inline sync context on main thread
         SynchronizationContext.SetSynchronizationContext(_syncCtx);
 
+        // Newer game builds require ModManager to reach a terminal state before
+        // ReflectionHelper can enumerate model types. Headless mode deliberately
+        // loads no mods, so mark it as skipped. Reflection keeps older DLLs working.
+        EnsureModManagerReady();
+
         // Initialize PlatformServices before anything touches PlatformUtil
         try
         {
@@ -3149,6 +3182,27 @@ public class RunSimulator
         {
             Console.Error.WriteLine($"[WARN] ModelIdSerializationCache.Init: {ex.Message}");
         }
+    }
+
+    private static void EnsureModManagerReady()
+    {
+        const string managerTypeName = "MegaCrit.Sts2.Core.Modding.ModManager";
+        var managerType = typeof(ReflectionHelper).Assembly.GetType(managerTypeName);
+        if (managerType == null) return;
+
+        var stateProperty = managerType.GetProperty(
+            "State", BindingFlags.Public | BindingFlags.Static);
+        if (stateProperty?.PropertyType.IsEnum != true) return;
+
+        var currentState = stateProperty.GetValue(null);
+        if (currentState != null && Convert.ToInt32(currentState) != 0) return;
+
+        managerType.GetMethod(
+            "ResetForTests", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+
+        var skippedState = Enum.Parse(stateProperty.PropertyType, "Skipped");
+        stateProperty.SetValue(null, skippedState);
+        Console.Error.WriteLine("[INFO] ModManager initialized in skipped mode");
     }
 
     private Player? CreatePlayer(string characterName)
