@@ -649,11 +649,19 @@ def show_player(p, show_deck=False):
     print(f"  {c(name, 'bold')}  HP {bar(hp, mhp)} {c(f'{hp}/{mhp}', 'red')}"
           + (f"  {c(str(blk), 'blue')} {t('blk','挡')}" if blk > 0 else "")
           + f"  {t('Gold','金')} {c(str(gold), 'yellow')}  {t('Deck','牌组')} {deck}")
-    for r in p.get("relics", []):
-        print(f"    🔶 {relic_str(r)}")
-    for pot in p.get("potions", []):
-        if pot:
-            print(f"    🧪 {potion_str(pot)}")
+    relics = p.get("relics", [])
+    potions = p.get("potions", [])
+    if relics:
+        for r in relics:
+            print(f"    🔶 {relic_str(r)}")
+    else:
+        print(f"    🔶 {c(t('Relics: none','遗物：无'), 'dim')}")
+    if potions:
+        for pot in potions:
+            if pot:
+                print(f"    🧪 {potion_str(pot)}")
+    else:
+        print(f"    🧪 {c(t('Potions: none','药水：无'), 'dim')}")
     if show_deck:
         cards = p.get("deck", [])
         if cards:
@@ -818,6 +826,7 @@ def show_map(state, send_fn=None):
     """Show map at map_select. Fetches full map if send_fn available."""
     choices = state.get("choices", [])
     choice_set = {(ch["col"], ch["row"]) for ch in choices}
+    show_player(state.get("player", {}))
 
     # Try to fetch full map for richer display
     if send_fn:
@@ -834,7 +843,6 @@ def show_map(state, send_fn=None):
     floor = ctx.get("floor", "?")
     print(f"\n{'═' * 60}")
     print(f"  {c(f'{act_name}', 'bold')} {t('Floor','层')} {floor}")
-    show_player(state.get("player", {}))
     print()
     type_icons = {
         "Monster": "⚔", "Elite": "💀", "Boss": "👹",
@@ -898,6 +906,19 @@ def card_pick_quantity_hint(mn, mx):
     return t(f"pick {mn}–{mx} cards", f"须选 {mn}–{mx} 张")
 
 
+def show_combat_pile(title, cards):
+    print(f"\n  {c(title, 'bold')} ({len(cards)})")
+    if not cards:
+        print(f"    {c(t('Empty','空'), 'dim')}")
+        return
+    for card in cards:
+        up = c("+", "green") if card.get("upgraded") else ""
+        print(
+            f"    [{card.get('index', '?')}] {n(card.get('name', '?'))}{up} "
+            f"({card.get('cost', '?')}) {c(card.get('type', ''), 'dim')}"
+        )
+
+
 def show_card_reward(state):
     print(f"\n{'─' * 60}")
     gold_earned = state.get("gold_earned", 0)
@@ -912,20 +933,47 @@ def show_card_reward(state):
         rarity = card.get("rarity", "Common")
         cost = card.get("cost", "?")
         type_color = {"Attack": "red", "Skill": "blue", "Power": "magenta"}.get(ctype, "reset")
-        rarity_zh = RARITY_ZH.get(rarity, rarity)
-        rarity_label = t(rarity, rarity_zh)
+        rarity_label = t(rarity, RARITY_ZH.get(rarity, rarity))
         rarity_color = {"Rare": "yellow", "Uncommon": "cyan"}.get(rarity, "dim")
         _pre, suf = split_card_keywords(card.get("keywords"))
-        suf_part = format_card_suffix_keywords(suf)
-        print(f"  [{card['index']}] {c(n(card['name']), type_color)} ({cost}) {c(rarity_label, rarity_color)}{suf_part}")
+        print(f"  [{card['index']}] {c(n(card['name']), type_color)} ({cost}) {c(rarity_label, rarity_color)}{format_card_suffix_keywords(suf)}")
         print_card_detail_extension(card, indent="      ")
-
     print()
     if cards:
         hi = len(cards) - 1
         print(f"  {c(t(f'Pick one card: type index 0–{hi}, or s to skip.', f'请选择一张：输入编号 0–{hi}，或 s 跳过。'), 'yellow')}")
-    else:
-        print(f"  {c(t('No cards to pick.', '没有可选卡牌。'), 'dim')}")
+
+
+def show_reward_select(state):
+    print(f"\n{'─' * 60}")
+    print(f"  {c(t('Rewards — choose claim order','奖励 — 自由选择领取顺序'), 'bold')}")
+    show_player(state.get("player", {}))
+    if state.get("message"):
+        print(f"\n  {c(state['message'], 'yellow')}")
+    print()
+    for reward in state.get("rewards", []):
+        kind = reward.get("type", reward.get("name", "Reward"))
+        name = reward.get("name", kind)
+        if reward.get("amount") is not None:
+            name = f"{reward['amount']} {t('Gold','金币')}"
+        count = reward.get("option_count")
+        suffix = f" ({count} {t('options','个选项')})" if count else ""
+        description = desc(reward.get("description", ""))
+        detail = f" — {c(description, 'dim')}" if description else ""
+        print(f"  [{reward['index']}] {name}{suffix}{detail}")
+        for card in reward.get("cards", []):
+            up = c("+", "green") if card.get("upgraded") else ""
+            rarity = card.get("rarity", "")
+            rarity_label = t(rarity, RARITY_ZH.get(rarity, rarity))
+            _pre, suffix_keywords = split_card_keywords(card.get("keywords"))
+            print(
+                f"      • {n(card.get('name', '?'))}{up} "
+                f"({card.get('cost', '?')}) "
+                f"{c(t(card.get('type', ''), CARD_TYPE_ZH.get(card.get('type', ''), card.get('type', ''))), 'dim')} "
+                f"{c(rarity_label, 'dim')}"
+                f"{format_card_suffix_keywords(suffix_keywords)}"
+            )
+            print_card_detail_extension(card, indent="        ")
 
 def show_shop(state):
     print(f"\n{'─' * 60}")
@@ -1075,6 +1123,7 @@ def show_event(state):
             opt_desc = resolve_template(opt_desc, opt_vars)
         desc_str = f" — {c(opt_desc, 'dim')}" if opt_desc else ""
         print(f"  {mark} [{opt['index']}] {title}{desc_str}")
+    print(f"\n  {c(t('Type map to inspect this act before choosing.','选择前可输入 map 查看本幕地图。'), 'dim')}")
 
 # ─── Input handling ───
 
@@ -1286,6 +1335,9 @@ def get_input(prompt, valid_options=None, state=None, multi_select=False, multi_
     {c('help', 'cyan')}     — 帮助
     {c('map', 'cyan')}      — 显示地图
     {c('deck', 'cyan')}     — 查看牌组
+    {c('draw', 'cyan')}     — 查看抽牌堆
+    {c('discard', 'cyan')}  — 查看弃牌堆
+    {c('d0', 'cyan')}       — 丢弃第 0 瓶药水（任意阶段）
     {c('potions', 'cyan')}  — 查看药水
     {c('relics', 'cyan')}   — 查看遗物
     {c('quit', 'cyan')}     — 退出
@@ -1307,6 +1359,9 @@ def get_input(prompt, valid_options=None, state=None, multi_select=False, multi_
     {c('help', 'cyan')}     — show this help
     {c('map', 'cyan')}      — show map
     {c('deck', 'cyan')}     — show deck
+    {c('draw', 'cyan')}     — show draw pile
+    {c('discard', 'cyan')}  — show discard pile
+    {c('d0', 'cyan')}       — discard potion 0 (at any decision)
     {c('potions', 'cyan')}  — show potions
     {c('relics', 'cyan')}   — show relics
     {c('quit', 'cyan')}     — quit
@@ -1341,6 +1396,30 @@ def get_input(prompt, valid_options=None, state=None, multi_select=False, multi_
             p = state.get("player", {})
             for r in p.get("relics", []):
                 print(f"  🔶 {relic_str(r)}")
+            continue
+        if raw.startswith("d") and raw[1:].isdigit() and state:
+            if hasattr(get_input, '_send'):
+                result = get_input._send({
+                    "cmd": "action",
+                    "action": "discard_potion",
+                    "args": {"potion_index": int(raw[1:])},
+                })
+                if result and result.get("type") == "error":
+                    print(f"  {c(t('Error:','错误:'), 'red')} {result.get('message', '?')}")
+                elif result:
+                    state.clear()
+                    state.update(result)
+                    print(f"  {c(t('Potion discarded.','药水已丢弃。'), 'yellow')}")
+            continue
+        if raw in ("draw", "discard"):
+            if hasattr(get_input, '_send'):
+                piles = get_input._send({"cmd": "get_piles"})
+                if piles and piles.get("type") == "piles":
+                    key = "draw_pile" if raw == "draw" else "discard_pile"
+                    title = t("Draw pile", "抽牌堆") if raw == "draw" else t("Discard pile", "弃牌堆")
+                    show_combat_pile(title, piles.get(key, []))
+                else:
+                    print(f"  {t('Pile is only available during combat.','牌堆仅能在战斗中查看。')}")
             continue
         if raw == "map":
             # Fetch full map from CLI
@@ -1677,17 +1756,7 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
                 act_name = n(ctx.get("act_name", "?"))
                 floor = state.get("floor", "?")
                 print(f"  {t('Act','幕')}: {state.get('act','?')} ({act_name})  {t('Floor','层')}: {floor}")
-                print(f"  {t('Character','角色')}: {n(p.get('name','?'))}")
-                print(f"  HP: {p.get('hp','?')}/{p.get('max_hp','?')}  {t('Gold','金')}: {p.get('gold','?')}")
-
-                deck = p.get("deck", [])
-                if deck:
-                    print(f"  {t('Deck','牌组')}: {len(deck)} {t('cards','张牌')}")
-
-                relics = p.get("relics", [])
-                if relics:
-                    relic_names = [n(r.get("name", "?")) for r in relics]
-                    print(f"  {t('Relics','遗物')} ({len(relics)}): {', '.join(relic_names)}")
+                show_player(p)
 
                 print(f"{'═' * 60}")
 
@@ -1803,9 +1872,48 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
                             args["target_index"] = min(enemies, key=lambda e: e.get("hp", 999))["index"]
                         else:
                             tgt = get_input("Target enemy [index]",
-                                           {str(e["index"]) for e in enemies})
+                                           {str(e["index"]) for e in enemies},
+                                           state=state)
                             args["target_index"] = int(tgt)
                     state = send({"cmd": "action", "action": "play_card", "args": args})
+
+            elif dec == "reward_select":
+                show_reward_select(state)
+                rewards = state.get("rewards", [])
+                valid = {str(reward["index"]) for reward in rewards}
+                valid.add("leave")
+                for potion in state.get("player", {}).get("potions", []):
+                    valid.add(f"d{potion['index']}")
+                    valid.add(f"p{potion['index']}")
+                if auto:
+                    choice = str(rewards[0]["index"]) if rewards else "leave"
+                else:
+                    choice = get_input(
+                        t("Claim [index], use p0, discard d0, or leave",
+                          "领取 [编号]、使用 p0、丢弃 d0，或 leave"),
+                        valid,
+                        state=state,
+                    )
+                if choice == "leave":
+                    state = send({"cmd": "action", "action": "leave_rewards"})
+                elif choice.startswith("d"):
+                    state = send({
+                        "cmd": "action",
+                        "action": "discard_potion",
+                        "args": {"potion_index": int(choice[1:])},
+                    })
+                elif choice.startswith("p"):
+                    state = send({
+                        "cmd": "action",
+                        "action": "use_potion",
+                        "args": {"potion_index": int(choice[1:])},
+                    })
+                else:
+                    state = send({
+                        "cmd": "action",
+                        "action": "claim_reward",
+                        "args": {"reward_index": int(choice)},
+                    })
 
             elif dec == "card_reward":
                 show_card_reward(state)

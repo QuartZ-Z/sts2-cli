@@ -115,6 +115,10 @@ class Game:
                 state = self.act("choose_option", option_index=opts[0]["index"])
             elif dec == "card_reward":
                 state = self.act("skip_card_reward")
+            elif dec == "reward_select":
+                rewards = state.get("rewards", [])
+                state = (self.act("claim_reward", reward_index=rewards[0]["index"])
+                         if rewards else self.act("leave_rewards"))
             elif dec == "bundle_select":
                 state = self.act("select_bundle", bundle_index=0)
             elif dec == "card_select":

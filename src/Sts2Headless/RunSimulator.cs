@@ -221,6 +221,13 @@ public class RunSimulator
     // Pending rewards for card selection (populated after combat, before proceeding)
     private List<Reward>? _pendingRewards;
     private CardReward? _pendingCardReward;
+    private Reward? _pendingRewardInProgress;
+    private Task<bool>? _pendingRewardTask;
+    private TaskCompletionSource? _pendingRewardsCompletion;
+    private sealed record ParentRewardContext(
+        List<Reward> Rewards, Reward Reward, Task<bool> Task,
+        TaskCompletionSource? Completion);
+    private readonly Stack<ParentRewardContext> _parentRewardContexts = new();
     private bool _rewardsProcessed;
     private int _goldBeforeCombat;
     private int _lastKnownHp;
@@ -235,6 +242,7 @@ public class RunSimulator
         {
             _loc.Lang = lang;
             EnsureModelDbInitialized();
+            InstallRewardSelector();
 
             var player = CreatePlayer(character);
             if (player == null)
@@ -445,6 +453,7 @@ public class RunSimulator
             RunManager.Instance.EnterRoom(room).GetAwaiter().GetResult();
             _syncCtx.Pump();
             WaitForActionExecutor();
+            FinalizePendingReward(2000);
             return DetectDecisionPoint();
         }
         catch (Exception ex) { return ErrorWithTrace("EnterRoom failed", ex); }
@@ -525,6 +534,7 @@ public class RunSimulator
         {
             _loc.Lang = lang;
             EnsureModelDbInitialized();
+            InstallRewardSelector();
 
             Log("Loading save file...");
 
@@ -909,6 +919,10 @@ public class RunSimulator
                     return DoSelectCardReward(player, args);
                 case "skip_card_reward":
                     return DoSkipCardReward(player);
+                case "claim_reward":
+                    return DoClaimReward(player, args);
+                case "leave_rewards":
+                    return DoLeaveRewards(player);
                 case "buy_card":
                     return DoBuyCard(player, args);
                 case "buy_relic":
@@ -1271,7 +1285,9 @@ public class RunSimulator
         }
         catch (Exception ex) { Log($"Add card to deck: {ex.Message}"); }
 
+        _pendingRewards?.Remove(_pendingCardReward);
         _pendingCardReward = null;
+        CompleteOfferedRewardsIfEmpty();
         // Check if more rewards pending
         return DetectDecisionPoint();
     }
@@ -1291,8 +1307,142 @@ public class RunSimulator
         {
             Log("Skipping card reward");
             _pendingCardReward.OnSkipped();
+            _pendingRewards?.Remove(_pendingCardReward);
             _pendingCardReward = null;
+            CompleteOfferedRewardsIfEmpty();
         }
+        return DetectDecisionPoint();
+    }
+
+    private void FinalizePendingReward(int waitMilliseconds = 0)
+    {
+        if (_pendingRewardTask == null || _pendingRewardInProgress == null) return;
+        var deadline = Environment.TickCount64 + waitMilliseconds;
+        while (!_pendingRewardTask.IsCompleted && Environment.TickCount64 < deadline)
+        {
+            _syncCtx.Pump();
+            Thread.Sleep(10);
+        }
+        if (!_pendingRewardTask.IsCompleted) return;
+        try
+        {
+            if (_pendingRewardTask.GetAwaiter().GetResult() ||
+                _pendingRewardInProgress.SuccessfullySelected)
+                _pendingRewards?.Remove(_pendingRewardInProgress);
+        }
+        catch (Exception ex) { Log($"Claim reward: {ex.Message}"); }
+        _pendingRewardTask = null;
+        _pendingRewardInProgress = null;
+        CompleteOfferedRewardsIfEmpty();
+    }
+
+    private void InstallRewardSelector()
+    {
+        var field = typeof(RewardsSet).GetField(
+            "testSelector", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        field?.SetValue(null, new Func<RewardsSet, Task>(CaptureOfferedRewards));
+    }
+
+    private Task CaptureOfferedRewards(RewardsSet rewardsSet)
+    {
+        if (_pendingRewards != null && _pendingRewardInProgress != null &&
+            _pendingRewardTask != null)
+        {
+            _parentRewardContexts.Push(new ParentRewardContext(
+                _pendingRewards, _pendingRewardInProgress, _pendingRewardTask,
+                _pendingRewardsCompletion));
+        }
+        _pendingRewards = rewardsSet.Rewards.ToList();
+        _pendingRewardsCompletion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Log($"Captured offered rewards: {_pendingRewards.Count}");
+        return _pendingRewardsCompletion.Task;
+    }
+
+    private void CompleteOfferedRewardsIfEmpty()
+    {
+        if (_pendingRewards != null && _pendingRewards.Count == 0)
+        {
+            _pendingRewardsCompletion?.TrySetResult();
+            _pendingRewardsCompletion = null;
+            if (_parentRewardContexts.Count > 0)
+            {
+                var parent = _parentRewardContexts.Pop();
+                // Completing the nested RewardsSet is the parent reward's actual
+                // interactive effect. Remove it immediately; its trailing UI task may
+                // finish a little later but must not reappear in the reward bar.
+                parent.Rewards.Remove(parent.Reward);
+                _pendingRewards = parent.Rewards;
+                _pendingRewardsCompletion = parent.Completion;
+            }
+        }
+    }
+
+    private Dictionary<string, object?> DoClaimReward(
+        Player player, Dictionary<string, object?>? args)
+    {
+        FinalizePendingReward();
+        if (_pendingRewardTask != null)
+            return Error("Another reward is still being resolved");
+        if (_pendingRewards == null || args == null || !args.ContainsKey("reward_index"))
+            return Error("claim_reward requires 'reward_index'");
+
+        var index = Convert.ToInt32(args["reward_index"]);
+        if (index < 0 || index >= _pendingRewards.Count)
+            return Error($"Invalid reward index {index}");
+        var reward = _pendingRewards[index];
+
+        if (reward is CardReward cardReward)
+        {
+            _pendingCardReward = cardReward;
+            return CardRewardState(player, _runState?.CurrentRoom as CombatRoom);
+        }
+        if (reward is PotionReward && !player.HasOpenPotionSlots)
+        {
+            var state = RewardSelectionState(player);
+            state["message"] = _loc.Lang == "zh"
+                ? "药水栏已满。请先使用或丢弃药水，或领取增加栏位的遗物。"
+                : "Potion slots are full. Use/discard a potion or claim a slot relic first.";
+            return state;
+        }
+
+        var rewardListBefore = _pendingRewards;
+        _pendingRewardInProgress = reward;
+        _pendingRewardTask = Task.Run(async () => await reward.SelectUnsynchronized());
+        for (var i = 0; i < 100; i++)
+        {
+            _syncCtx.Pump();
+            if (_cardSelector.HasPending || _cardSelector.HasPendingReward ||
+                _pendingBundles != null || _pendingRewardTask.IsCompleted ||
+                !ReferenceEquals(_pendingRewards, rewardListBefore)) break;
+            Thread.Sleep(1);
+        }
+        if (!ReferenceEquals(_pendingRewards, rewardListBefore))
+        {
+            _pendingRewardTask = null;
+            _pendingRewardInProgress = null;
+            return DetectDecisionPoint();
+        }
+        if (_cardSelector.HasPending || _cardSelector.HasPendingReward || _pendingBundles != null)
+            return DetectDecisionPoint();
+
+        FinalizePendingReward(250);
+        return DetectDecisionPoint();
+    }
+
+    private Dictionary<string, object?> DoLeaveRewards(Player player)
+    {
+        if (_pendingRewards != null)
+            foreach (var reward in _pendingRewards.ToList())
+                try { reward.OnSkipped(); } catch { }
+        var returnsToParentRewards = _parentRewardContexts.Count > 0;
+        _pendingRewards?.Clear();
+        CompleteOfferedRewardsIfEmpty();
+        if (!returnsToParentRewards)
+            _pendingRewards = null;
+        _pendingCardReward = null;
+        _pendingRewardTask = null;
+        _pendingRewardInProgress = null;
         return DetectDecisionPoint();
     }
 
@@ -1473,6 +1623,7 @@ public class RunSimulator
         _cardSelector.ResolvePendingByIndices(indices);
         _syncCtx.Pump();
         WaitForActionExecutor();
+        FinalizePendingReward(2000);
 
         // Extra wait for rest-site SMITH: the background ChooseLocalOption task
         // needs time to complete the upgrade after card selection resolves.
@@ -1507,6 +1658,7 @@ public class RunSimulator
             _cardSelector.CancelPending();
             _syncCtx.Pump();
             WaitForActionExecutor();
+            FinalizePendingReward(2000);
         }
         return DetectDecisionPoint();
     }
@@ -1682,12 +1834,17 @@ public class RunSimulator
                             _syncCtx.Pump();
                             if (_cardSelector.HasPending || _cardSelector.HasPendingReward) break;
                             if (_pendingBundles != null) break;
+                            if (_pendingRewardsCompletion != null &&
+                                _pendingRewards is { Count: > 0 }) break;
                             if (task.IsCompleted) break;
-                            Thread.Sleep(10);
+                            Thread.Sleep(1);
                         }
-                        if (_cardSelector.HasPending || _cardSelector.HasPendingReward || _pendingBundles != null)
+                        if (_cardSelector.HasPending || _cardSelector.HasPendingReward ||
+                            _pendingBundles != null ||
+                            (_pendingRewardsCompletion != null && _pendingRewards is { Count: > 0 }))
                         {
-                            WaitForActionExecutor();
+                            if (_pendingRewardsCompletion == null)
+                                WaitForActionExecutor();
                             return DetectDecisionPoint();
                         }
                         if (!task.IsCompleted) task.Wait(2000);
@@ -1911,6 +2068,16 @@ public class RunSimulator
                 ["max_select"] = _cardSelector.PendingMaxSelect,
                 ["player"] = PlayerSummary(player),
             };
+        }
+
+        // Rewards offered by events/ancients use the same player-ordered reward bar
+        // as post-combat rewards.
+        if (_pendingRewards != null && _pendingCardReward == null)
+        {
+            _pendingRewards.RemoveAll(reward => reward.SuccessfullySelected);
+            CompleteOfferedRewardsIfEmpty();
+            if (_pendingRewards.Count > 0)
+                return RewardSelectionState(player);
         }
 
         // Check if there's a pending card reward
@@ -2381,8 +2548,10 @@ public class RunSimulator
     {
         Log($"Post-combat: RoomType={combatRoom.RoomType}, IsPreFinished={combatRoom.IsPreFinished}");
         _syncCtx.Pump();
+        FinalizePendingReward();
 
-        // Generate rewards manually instead of using TestMode auto-accept
+        // Generate rewards without offering the Godot screen. The CLI exposes the
+        // resulting list and lets the player claim it in any order.
         if (_pendingRewards == null && !_rewardsProcessed)
         {
             _goldBeforeCombat = player.Gold;
@@ -2395,32 +2564,16 @@ public class RunSimulator
                 var rewards = rewardsSet.Rewards;
                 _syncCtx.Pump();
 
-                // Auto-collect gold and potions, but present card choices to agent
-                var cardRewards = new List<CardReward>();
-                foreach (var reward in rewards)
-                {
-                    if (reward is GoldReward || reward is MegaCrit.Sts2.Core.Rewards.RelicReward
-                        || reward is MegaCrit.Sts2.Core.Rewards.PotionReward)
-                    {
-                        try { reward.SelectUnsynchronized().GetAwaiter().GetResult(); _syncCtx.Pump(); }
-                        catch (Exception ex) { Log($"Auto-collect reward: {ex.Message}"); }
-                    }
-                    else if (reward is CardReward cr)
-                    {
-                        cardRewards.Add(cr);
-                    }
-                }
-
-                if (cardRewards.Count > 0)
-                {
-                    _pendingCardReward = cardRewards[0];
-                    _pendingRewards = rewards;
-                    return CardRewardState(player, combatRoom);
-                }
-
-                _pendingRewards = null;
+                _pendingRewards = rewards.ToList();
             }
             catch (Exception ex) { Log($"Generate rewards: {ex.Message}"); }
+        }
+
+        if (_pendingRewards != null)
+        {
+            _pendingRewards.RemoveAll(reward => reward.SuccessfullySelected);
+            if (_pendingRewards.Count > 0)
+                return RewardSelectionState(player);
         }
 
         // No more pending rewards — proceed
@@ -2454,6 +2607,78 @@ public class RunSimulator
         // Normal → go to map
         ForceToMap();
         return MapSelectState();
+    }
+
+    private Dictionary<string, object?> RewardSelectionState(Player player)
+    {
+        var rewards = (_pendingRewards ?? new List<Reward>())
+            .Select((reward, index) =>
+            {
+                var item = new Dictionary<string, object?>
+                {
+                    ["index"] = index,
+                    ["type"] = reward.GetType().Name,
+                    ["name"] = reward.GetType().Name,
+                };
+                switch (reward)
+                {
+                    case GoldReward gold:
+                        item["amount"] = gold.Amount;
+                        break;
+                    case RelicReward relic:
+                        item["name"] = _loc.Relic(relic.Relic.Id.Entry);
+                        item["id"] = relic.Relic.Id.ToString();
+                        item["description"] = _loc.Bilingual(
+                            "relics", relic.Relic.Id.Entry + ".description");
+                        break;
+                    case PotionReward potion:
+                        item["name"] = _loc.Potion(potion.Potion.Id.Entry);
+                        item["id"] = potion.Potion.Id.ToString();
+                        item["description"] = _loc.Bilingual(
+                            "potions", potion.Potion.Id.Entry + ".description");
+                        break;
+                    case CardReward card:
+                        var cardRewardName = _loc.Bilingual(
+                            "card_reward_ui", "CARD_REWARD.header");
+                        item["name"] = cardRewardName == "CARD_REWARD.header"
+                            ? (_loc.Lang == "zh" ? "卡牌奖励" : "Card Reward")
+                            : cardRewardName;
+                        item["option_count"] = card.Cards.Count();
+                        item["cards"] = card.Cards.Select((option, optionIndex) =>
+                        {
+                            var keywords = option.Keywords?
+                                .Where(keyword => keyword != CardKeyword.None)
+                                .Select(keyword => keyword.ToString())
+                                .ToList();
+                            return new Dictionary<string, object?>
+                            {
+                                ["index"] = optionIndex,
+                                ["id"] = option.Id.ToString(),
+                                ["name"] = _loc.Card(option.Id.Entry),
+                                ["cost"] = option.EnergyCost?.GetResolved() ?? 0,
+                                ["type"] = option.Type.ToString(),
+                                ["rarity"] = option.Rarity.ToString(),
+                                ["upgraded"] = option.IsUpgraded,
+                                ["description"] = _loc.Bilingual(
+                                    "cards", option.Id.Entry + ".description"),
+                                ["keywords"] = keywords?.Count > 0 ? keywords : null,
+                                ["after_upgrade"] = GetUpgradedInfo(option),
+                            };
+                        }).ToList();
+                        break;
+                }
+                return item;
+            }).ToList();
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "decision",
+            ["decision"] = "reward_select",
+            ["context"] = RunContext(),
+            ["rewards"] = rewards,
+            ["can_leave"] = true,
+            ["player"] = PlayerSummary(player),
+        };
     }
 
     private Dictionary<string, object?> CardRewardState(Player player, CombatRoom? combatRoom)
@@ -2513,6 +2738,24 @@ public class RunSimulator
     {
         var localEvent = RunManager.Instance.EventSynchronizer?.GetLocalEvent();
         _syncCtx.Pump();
+
+        // Ancient choices are single-shot. Some rewards replace the original options
+        // with a cosmetic "done" option after their nested card/relic selection resolves.
+        // The Godot UI closes that page automatically; the CLI must do the same.
+        if (_eventOptionChosen && localEvent is AncientEventModel ancientEvent)
+        {
+            _eventOptionChosen = false;
+            try
+            {
+                ancientEvent.GetType().GetMethod(
+                    "Done", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                    ?.Invoke(ancientEvent, null);
+                _syncCtx.Pump();
+            }
+            catch (Exception ex) { Log($"Finish ancient event: {ex.Message}"); }
+            ForceToMap();
+            return MapSelectState();
+        }
 
         // Reset the choice-tracking flag once we re-export the event state. Earlier this
         // block force-finished events whose option count was unchanged, but that incorrectly
@@ -3943,6 +4186,33 @@ public class RunSimulator
                 ["col"] = (int)currentCoord.Value.col,
                 ["row"] = (int)currentCoord.Value.row,
             } : null,
+        };
+    }
+
+    public Dictionary<string, object?> GetCombatPiles()
+    {
+        var player = _runState?.Players.FirstOrDefault();
+        var combat = player?.PlayerCombatState;
+        if (combat == null)
+            return Error("Combat piles are only available during combat");
+
+        List<Dictionary<string, object?>> Export(IEnumerable<CardModel> cards) =>
+            cards.Select((card, index) => new Dictionary<string, object?>
+            {
+                ["index"] = index,
+                ["id"] = card.Id.ToString(),
+                ["name"] = _loc.Card(card.Id.Entry),
+                ["cost"] = card.EnergyCost?.GetResolved() ?? 0,
+                ["type"] = card.Type.ToString(),
+                ["upgraded"] = card.IsUpgraded,
+                ["description"] = _loc.Bilingual("cards", card.Id.Entry + ".description"),
+            }).ToList();
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "piles",
+            ["draw_pile"] = Export(combat.DrawPile.Cards),
+            ["discard_pile"] = Export(combat.DiscardPile.Cards),
         };
     }
 

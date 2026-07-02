@@ -82,16 +82,25 @@ python3 python/play.py --character Silent      # play as Silent
 Type `help` in-game:
 
 ```
+
+HP, gold, potions, and relics are shown at every decision point. `deck` can be
+used from any prompt, including map, event, reward, shop, and rest-site choices.
+Unclaimed card rewards preview all candidate cards before you choose their
+position in the reward order.
   help     — show help
   map      — show map
   deck     — show deck
+  draw     — inspect the combat draw pile
+  discard  — inspect the combat discard pile
+  d0       — discard potion 0 at any decision point
   potions  — show potions
   relics   — show relics
   quit     — quit
 
   Map:     enter path number (0, 1, 2)
   Combat:  card index / e (end turn) / p0 (use potion)
-  Reward:  card index / s (skip)
+  Reward:  reward index (claim in any order) / p0 use potion / d0 discard / leave
+  Cards:   card index / s (skip)
   Rest:    option index
   Event:   option index / leave
   Shop:    c0 (card) / r0 (relic) / p0 (potion) / rm (remove) / leave
@@ -114,7 +123,10 @@ dotnet run --project src/Sts2Headless/Sts2Headless.csproj
 {"cmd": "quit"}
 ```
 
-Each command returns a JSON decision point (`map_select` / `combat_play` / `card_reward` / `rest_site` / `event_choice` / `shop` / `game_over`). All names are in English.
+Each command returns a JSON decision point (`map_select` / `combat_play` /
+`reward_select` / `card_reward` / `rest_site` / `event_choice` / `shop` /
+`game_over`). Use `get_map` at act-opening Ancient events and `get_piles`
+during combat. All names are in English.
 
 ## Game Logs
 
@@ -233,16 +245,24 @@ python3 python/play.py --character Silent      # 选择静默猎手
 游戏内输入 `help` 查看所有命令：
 
 ```
+
+每个决策界面都会显示生命、金币、药水和遗物。`deck` 可在地图、事件、
+奖励、商店、休息点等任意提示中使用。尚未领取的卡牌奖励会直接预览其中
+所有候选牌，无需先改变奖励领取顺序。
   help     — 帮助
   map      — 显示地图
   deck     — 查看牌组
+  draw     — 查看战斗抽牌堆
+  discard  — 查看战斗弃牌堆
+  d0       — 在任意决策阶段丢弃第 0 瓶药水
   potions  — 查看药水
   relics   — 查看遗物
   quit     — 退出
 
   地图:    输入编号 (0, 1, 2)
   战斗:    输入卡牌编号 / e 结束回合 / p0 使用药水
-  奖励:    输入卡牌编号 / s 跳过
+  奖励:    输入奖励编号（可自由选择领取顺序）/ p0 使用药水 / d0 丢弃 / leave
+  卡牌:    输入卡牌编号 / s 跳过
   休息:    输入选项编号
   事件:    输入选项编号 / leave 离开
   商店:    c0 买卡 / r0 买遗物 / p0 买药水 / rm 移除 / leave 离开
@@ -275,7 +295,10 @@ dotnet run --project src/Sts2Headless/Sts2Headless.csproj
 {"cmd": "quit"}
 ```
 
-每个命令返回一个 JSON decision point（`map_select` / `combat_play` / `card_reward` / `rest_site` / `event_choice` / `shop` / `game_over`），所有名称为英文。
+每个命令返回一个 JSON decision point（`map_select` / `combat_play` /
+`reward_select` / `card_reward` / `rest_site` / `event_choice` / `shop` /
+`game_over`）。幕初先古事件中可使用 `get_map`，战斗中可使用
+`get_piles`。所有名称为英文。
 
 ## 游戏日志
 

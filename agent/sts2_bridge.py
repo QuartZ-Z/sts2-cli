@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP bridge for STS2 headless game. Lets Claude Code interact one command at a time.
+"""HTTP bridge for STS2 headless game. Lets Codex or another agent interact one command at a time.
 
 Usage:
     python3 agent/sts2_bridge.py [port] [--compact] [--log FILE]

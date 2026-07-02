@@ -168,6 +168,8 @@ class Program
             }
             case "get_map":
                 return sim.GetFullMap();
+            case "get_piles":
+                return sim.GetCombatPiles();
 
             case "set_player":
             {
