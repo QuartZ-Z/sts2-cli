@@ -26,7 +26,7 @@ macOS/Linux:
 ```bash
 ./setup.sh --validate-only /path/to/game
 dotnet build src/Sts2Headless/Sts2Headless.csproj
-python3 -m pytest tests
+python -m pytest tests
 ```
 
 For gameplay changes, run focused deterministic JSON-protocol reproductions in
@@ -34,7 +34,7 @@ addition to unit tests. Before a release, run batch games for every character:
 
 ```bash
 for char in Ironclad Silent Defect Regent Necrobinder; do
-  python3 python/play_full_run.py 5 "$char"
+  python scripts/play_full_run.py 5 "$char"
 done
 ```
 
@@ -49,8 +49,8 @@ which step was not run.
 - `src/Sts2Headless/Program.cs`: stdin/stdout JSON command router.
 - `src/Sts2Patcher/`: the single shared IL patcher used by all setup paths.
 - `src/GodotStubs/`: no-op replacement for GodotSharp.
-- `python/play.py`: interactive terminal client.
-- `python/play_full_run.py`: batch simulation client.
+- `scripts/play.py`: interactive terminal client.
+- `scripts/play_full_run.py`: batch simulation client.
 - `tests/`: protocol-level integration tests.
 - `localization_eng/`, `localization_zhs/`: official localization data.
 

@@ -55,6 +55,8 @@ class TestCardReward:
         assert reward["cards"]
         assert all("name" in card and "description" in card
                    for card in reward["cards"])
+        assert all(isinstance(card.get("stats"), dict)
+                   for card in reward["cards"])
 
     def test_select_card_adds_to_deck(self, game):
         state = game.start(seed="cr3")

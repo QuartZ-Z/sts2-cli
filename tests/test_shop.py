@@ -30,6 +30,11 @@ class TestShopStructure:
         state = game.enter_room("shop")
         has_upgrade = any(c.get("after_upgrade") for c in state["cards"])
         assert has_upgrade
+        for card in state["cards"]:
+            assert isinstance(card.get("stats"), dict)
+            assert card["card_cost"] <= 5
+            if card.get("after_upgrade"):
+                assert card["after_upgrade"]["cost"] <= 5
 
     def test_shop_relics_have_description(self, game):
         state = game.start(seed="ss4")
@@ -38,6 +43,7 @@ class TestShopStructure:
         for r in state["relics"]:
             assert isinstance(r["name"], str)
             assert "description" in r
+            assert "vars" in r
 
     def test_shop_potions_have_description(self, game):
         state = game.start(seed="ss5")
@@ -46,6 +52,7 @@ class TestShopStructure:
         for p in state["potions"]:
             assert isinstance(p["name"], str)
             assert "description" in p
+            assert "vars" in p
 
 
 class TestShopBuy:

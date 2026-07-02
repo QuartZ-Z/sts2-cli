@@ -20,6 +20,8 @@ class TestMapStructure:
         assert m["type"] == "map"
         assert "rows" in m
         assert "boss" in m
+        assert isinstance(m["boss"]["name"], str)
+        assert m["boss"]["name"]
         assert "current_coord" in m
 
     def test_context_fields(self, game):

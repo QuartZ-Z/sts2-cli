@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Auto-play a full STS2 Necrobinder run via the bridge."""
 import json, sys, urllib.request, time, uuid
 
@@ -416,7 +416,7 @@ def restart_bridge():
     # Start new bridge
     log = f"/tmp/sts2_game_{PORT}.jsonl"
     proc = subprocess.Popen(
-        ["python3", "agent/sts2_bridge.py", str(PORT), "--compact", "--log", log],
+        [sys.executable, "agent/sts2_bridge.py", str(PORT), "--compact", "--log", log],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     time.sleep(6)

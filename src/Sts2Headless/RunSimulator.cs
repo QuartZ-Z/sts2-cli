@@ -2630,12 +2630,14 @@ public class RunSimulator
                         item["id"] = relic.Relic.Id.ToString();
                         item["description"] = _loc.Bilingual(
                             "relics", relic.Relic.Id.Entry + ".description");
+                        item["vars"] = GetRelicVars(relic.Relic);
                         break;
                     case PotionReward potion:
                         item["name"] = _loc.Potion(potion.Potion.Id.Entry);
                         item["id"] = potion.Potion.Id.ToString();
                         item["description"] = _loc.Bilingual(
                             "potions", potion.Potion.Id.Entry + ".description");
+                        item["vars"] = GetPotionVars(potion.Potion);
                         break;
                     case CardReward card:
                         var cardRewardName = _loc.Bilingual(
@@ -2661,6 +2663,7 @@ public class RunSimulator
                                 ["upgraded"] = option.IsUpgraded,
                                 ["description"] = _loc.Bilingual(
                                     "cards", option.Id.Entry + ".description"),
+                                ["stats"] = GetCardBaseStats(option),
                                 ["keywords"] = keywords?.Count > 0 ? keywords : null,
                                 ["after_upgrade"] = GetUpgradedInfo(option),
                             };
@@ -2688,8 +2691,7 @@ public class RunSimulator
 
         var cards = _pendingCardReward.Cards.Select((c, i) =>
         {
-            var stats = new Dictionary<string, object?>();
-            try { foreach (var dv in c.DynamicVars.Values) stats[dv.Name.ToLowerInvariant()] = (int)dv.BaseValue; } catch { }
+            var stats = GetCardBaseStats(c);
             var crkws = c.Keywords?.Where(k => k != CardKeyword.None).Select(k => k.ToString()).ToList();
             return new Dictionary<string, object?>
             {
@@ -2976,17 +2978,7 @@ public class RunSimulator
                     if (card != null)
                     {
                         cardCost = card.EnergyCost?.GetResolved() ?? 0;
-                        // The shop entry's card can have uninitialized DynamicVars (stats: null
-                        // while after_upgrade is populated, #68). Read base stats from a fresh
-                        // ModelDb clone at the card's current upgrade level, like GetUpgradedInfo.
-                        var fresh = ModelDb.GetById<CardModel>(card.Id).ToMutable();
-                        for (int u = 0; u < card.CurrentUpgradeLevel; u++)
-                        {
-                            fresh.UpgradeInternal();
-                            fresh.FinalizeUpgradeInternal();
-                        }
-                        foreach (var dv in fresh.DynamicVars.Values)
-                            stats[dv.Name.ToLowerInvariant()] = (int)dv.BaseValue;
+                        stats = GetCardBaseStats(card);
                     }
                 }
                 catch { }
@@ -3013,6 +3005,7 @@ public class RunSimulator
             ["index"] = i,
             ["name"] = _loc.Relic(e.Model?.Id.Entry ?? "?"),
             ["description"] = _loc.Bilingual("relics", (e.Model?.Id.Entry ?? "?") + ".description"),
+            ["vars"] = e.Model != null ? GetRelicVars(e.Model) : null,
             ["cost"] = e.Cost,
             ["is_stocked"] = e.IsStocked,
         }).ToList();
@@ -3022,6 +3015,7 @@ public class RunSimulator
             ["index"] = i,
             ["name"] = _loc.Potion(e.Model?.Id.Entry ?? "?"),
             ["description"] = _loc.Bilingual("potions", (e.Model?.Id.Entry ?? "?") + ".description"),
+            ["vars"] = e.Model != null ? GetPotionVars(e.Model) : null,
             ["cost"] = e.Cost,
             ["is_stocked"] = e.IsStocked,
         }).ToList();
@@ -3199,6 +3193,58 @@ public class RunSimulator
     }
 
     /// <summary>Compute what a card would look like after upgrading (stats + cost + description).</summary>
+    private static Dictionary<string, object?> GetCardBaseStats(CardModel card)
+    {
+        var stats = new Dictionary<string, object?>();
+        try
+        {
+            var fresh = ModelDb.GetById<CardModel>(card.Id).ToMutable();
+            for (var level = 0; level < card.CurrentUpgradeLevel; level++)
+            {
+                fresh.UpgradeInternal();
+                fresh.FinalizeUpgradeInternal();
+            }
+            foreach (var variable in fresh.DynamicVars.Values)
+                stats[variable.Name.ToLowerInvariant()] = (int)variable.BaseValue;
+        }
+        catch
+        {
+            try
+            {
+                foreach (var variable in card.DynamicVars.Values)
+                    stats[variable.Name.ToLowerInvariant()] = (int)variable.BaseValue;
+            }
+            catch { }
+        }
+        return stats;
+    }
+
+    private static Dictionary<string, object?>? GetRelicVars(RelicModel relic)
+    {
+        var vars = new Dictionary<string, object?>();
+        try
+        {
+            var source = ModelDb.GetById<RelicModel>(relic.Id)?.ToMutable() ?? relic;
+            foreach (var variable in source.DynamicVars.Values)
+                vars[variable.Name] = (int)variable.BaseValue;
+        }
+        catch { }
+        return vars.Count > 0 ? vars : null;
+    }
+
+    private static Dictionary<string, object?>? GetPotionVars(PotionModel potion)
+    {
+        var vars = new Dictionary<string, object?>();
+        try
+        {
+            var source = ModelDb.GetById<PotionModel>(potion.Id)?.ToMutable() ?? potion;
+            foreach (var variable in source.DynamicVars.Values)
+                vars[variable.Name] = (int)variable.BaseValue;
+        }
+        catch { }
+        return vars.Count > 0 ? vars : null;
+    }
+
     private Dictionary<string, object?>? GetUpgradedInfo(CardModel card)
     {
         if (!card.IsUpgradable) return null;
@@ -3273,8 +3319,7 @@ public class RunSimulator
             ["deck_size"] = player.Deck?.Cards?.Count(c => c != null) ?? 0,
             ["deck"] = player.Deck?.Cards?.Where(c => c != null).Select(c =>
             {
-                var dstats = new Dictionary<string, object?>();
-                try { foreach (var dv in c.DynamicVars.Values) dstats[dv.Name.ToLowerInvariant()] = (int)dv.BaseValue; } catch { }
+                var dstats = GetCardBaseStats(c);
                 var dkws = c.Keywords?.Where(k => k != CardKeyword.None).Select(k => k.ToString()).ToList();
                 var dcard = new Dictionary<string, object?>
                 {

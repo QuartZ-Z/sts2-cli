@@ -1,16 +1,16 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """HTTP bridge for STS2 headless game. Lets Codex or another agent interact one command at a time.
 
 Usage:
-    python3 agent/sts2_bridge.py [port] [--compact] [--log FILE]
-    python3 agent/sts2_bridge.py replay <logfile> [--until STEP] [--port PORT]
+    python agent/sts2_bridge.py [port] [--compact] [--log FILE]
+    python agent/sts2_bridge.py replay <logfile> [--until STEP] [--port PORT]
 
 Examples:
     # Normal play with logging
-    python3 agent/sts2_bridge.py 9876 --compact --log /tmp/game.jsonl
+    python agent/sts2_bridge.py 9876 --compact --log /tmp/game.jsonl
 
     # Replay a logged game up to step 42, then continue interactively
-    python3 agent/sts2_bridge.py replay /tmp/game.jsonl --until 42 --port 9876
+    python agent/sts2_bridge.py replay /tmp/game.jsonl --until 42 --port 9876
 """
 import json, subprocess, os, sys, threading, re, time
 from http.server import HTTPServer, BaseHTTPRequestHandler

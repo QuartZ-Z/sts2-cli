@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
-sts2-cli 启动器：选择新游戏（角色、进阶）或读取存档，再进入 python/play.py。
+sts2-cli 启动器：选择新游戏（角色、进阶）或读取存档，再进入 scripts/play.py。
 """
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ import subprocess
 import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "python"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 from sts2_config import configured_launch_args, load_config  # noqa: E402
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PLAY_PY = os.path.join(ROOT, "python", "play.py")
+PLAY_PY = os.path.join(ROOT, "scripts", "play.py")
 SAVE_DIR = os.path.join(ROOT, "saves")
 LOC_CHARS = os.path.join(ROOT, "localization_zhs", "characters.json")
 
@@ -184,7 +184,7 @@ def _menu_load_save(titles: dict[str, str], lang: str) -> None:
 
 
 def _main_interactive(lang: str) -> None:
-    sys.path.insert(0, os.path.join(ROOT, "python"))
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import play as play_mod  # noqa: PLC0415
 
     play_mod.ensure_setup()

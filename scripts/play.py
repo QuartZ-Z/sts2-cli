@@ -1,12 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 sts2-cli interactive player — play Slay the Spire 2 in your terminal.
 
 Usage:
-    python3 play.py                    # Interactive mode (you play)
-    python3 play.py --auto             # Auto-play with simple AI
-    python3 play.py --seed myseed      # Fixed seed for reproducibility
-    python3 play.py --character Silent  # Choose character
+    python scripts/play.py                    # Interactive mode (you play)
+    python scripts/play.py --auto             # Auto-play with simple AI
+    python scripts/play.py --seed myseed      # Fixed seed for reproducibility
+    python scripts/play.py --character Silent # Choose character
 """
 
 import json
@@ -24,6 +24,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT = os.path.join(ROOT, "src", "Sts2Headless", "Sts2Headless.csproj")
 LIB_DIR = os.path.join(ROOT, "lib")
 SAVE_DIR = os.path.join(ROOT, "saves")
+CLI_COMMAND = "python scripts/play.py"
+
+
+def _resolve_input_path(path, kind="File"):
+    """Resolve a CLI path and diagnose the common .sav/.save typo."""
+    resolved = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    if os.path.isfile(resolved):
+        return resolved
+
+    if resolved.lower().endswith(".sav"):
+        corrected = resolved + "e"
+        if os.path.isfile(corrected):
+            print(f"{kind} not found: {resolved}")
+            print(f"Did you mean: {corrected}")
+            print("Native STS2 saves use the .save extension, not .sav.")
+            return None
+
+    print(f"{kind} not found: {resolved}")
+    print(f"Run `{CLI_COMMAND} --saves` to list available save files.")
+    return None
 
 
 def _find_dotnet():
@@ -875,7 +895,18 @@ def _format_upgrade_preview(stats, aug, current_cost=None):
             elif k == "block":
                 parts.append(c(f"{t('blk','格挡')} {old}→{new_val}", "blue"))
             else:
-                parts.append(c(f"{old}→{new_val}", "green"))
+                labels = {
+                    "poisonpower": t("poison", "中毒"),
+                    "weakpower": t("weak", "虚弱"),
+                    "dexteritypower": t("dexterity", "敏捷"),
+                    "strengthpower": t("strength", "力量"),
+                    "heal": t("heal", "治疗"),
+                    "energy": t("energy", "能量"),
+                    "shivs": t("shivs", "小刀"),
+                    "repeat": t("hits", "次数"),
+                }
+                label = labels.get(k.lower(), k)
+                parts.append(c(f"{label} {old}→{new_val}", "green"))
     # Keyword changes (e.g., Discovery removes Exhaust)
     for kw in (aug.get("removed_keywords") or []):
         parts.append(c(f"-{_card_kw_label(kw)}", "green"))
@@ -890,7 +921,8 @@ def print_card_detail_extension(card, indent="      "):
         if line:
             print(f"{indent}{c(line, 'dim')}")
     stats = card.get("stats") or {}
-    aug_parts = _format_upgrade_preview(stats, card.get("after_upgrade"), card.get("cost"))
+    current_cost = card.get("card_cost", card.get("cost"))
+    aug_parts = _format_upgrade_preview(stats, card.get("after_upgrade"), current_cost)
     if aug_parts:
         print(f"{indent}{c(t('upgrade:','升级:'), 'green')} {', '.join(aug_parts)}")
 
@@ -958,7 +990,9 @@ def show_reward_select(state):
             name = f"{reward['amount']} {t('Gold','金币')}"
         count = reward.get("option_count")
         suffix = f" ({count} {t('options','个选项')})" if count else ""
-        description = desc(reward.get("description", ""))
+        description = resolve_template(
+            desc(reward.get("description", "")), reward.get("vars") or {}
+        )
         detail = f" — {c(description, 'dim')}" if description else ""
         print(f"  [{reward['index']}] {name}{suffix}{detail}")
         for card in reward.get("cards", []):
@@ -999,7 +1033,7 @@ def show_shop(state):
         if not r.get("is_stocked"): continue
         cost = r.get("cost", 0)
         affordable = c(str(cost), "green") if cost <= gold else c(str(cost), "red")
-        r_desc = desc(r.get("description", ""))
+        r_desc = resolve_template(desc(r.get("description", "")), r.get("vars") or {})
         print(f"  [r{r['index']}] {n(r['name'])} — {affordable}{t('g','金')}")
         if r_desc:
             print(f"      {c(r_desc, 'dim')}")
@@ -1009,7 +1043,7 @@ def show_shop(state):
         if not p.get("is_stocked"): continue
         cost = p.get("cost", 0)
         affordable = c(str(cost), "green") if cost <= gold else c(str(cost), "red")
-        p_desc = desc(p.get("description", ""))
+        p_desc = resolve_template(desc(p.get("description", "")), p.get("vars") or {})
         print(f"  [p{p['index']}] {n(p['name'])} — {affordable}{t('g','金')}")
         if p_desc:
             print(f"      {c(p_desc, 'dim')}")
@@ -1186,6 +1220,9 @@ def _render_map(map_data, choice_set=None, choice_indices=None):
     line = "".join(buf)
     line = line[:boss_col * W + W // 2] + c("B", "red") + line[boss_col * W + W // 2 + 1:]
     print(f"  {c('B','dim')} | {line}")
+    boss_name = boss.get("name")
+    if boss_name:
+        print(f"    {c(t('Boss','Boss'), 'red')}: {c(n(boss_name), 'bold')}")
 
     # Connection from top row to boss
     top_rn = row_numbers[-1] if row_numbers else -1
@@ -1445,7 +1482,7 @@ def get_input(prompt, valid_options=None, state=None, multi_select=False, multi_
                 print(f"\n  {c(t('Saved games:','存档列表:'), 'bold')}")
                 for s in saves:
                     print(f"    {c(s['file'], 'cyan')}  {s['character']}  {t('Seed','种子')}:{s['seed']}  {t('Actions','操作数')}:{s['actions']}")
-                print(f"\n  {t('Load with:','读档命令:')} python3 play.py --load saves/{saves[0]['file']}")
+                print(f"\n  {t('Load with:','读档命令:')} {CLI_COMMAND} --load saves/{saves[0]['file']}")
             else:
                 print(f"  {t('No saves found.','没有找到存档。')}")
             continue
@@ -1569,7 +1606,7 @@ def _show_quit_save_result(result):
         print(f"  {c(t('Saved!','已存档!'), 'green')} ({sz // 1024}KB)")
         if save_path:
             print(f"  {t('Save path:','存档位置:')} {c(save_path, 'cyan')}")
-            print(f"  {t('Continue later:','下次继续:')} python3 play.py --continue {save_path}")
+            print(f"  {t('Continue later:','下次继续:')} {CLI_COMMAND} --continue {save_path}")
     elif save_result:
         print(f"  {c(t('Save failed:','存档失败:'), 'red')} {save_result.get('message', '?')}")
 
@@ -1664,7 +1701,7 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
         save_path = os.path.join(SAVE_DIR, fname)
         _save_game(save_path, character, actual_seed, action_log)
         print(f"  {c(t('Saved!','已存档!'), 'green')} {fname} ({len(action_log)} {t('actions','步操作')})")
-        print(f"  {t('Load with:','读档命令:')} python3 play.py --load {os.path.relpath(save_path, ROOT)}")
+        print(f"  {t('Load with:','读档命令:')} {CLI_COMMAND} --load {os.path.relpath(save_path, ROOT)}")
 
     get_input._save_fn = do_save
     try:
@@ -2193,7 +2230,10 @@ def play(character="Ironclad", seed=None, auto=False, ascension=0, log=True,
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Play Slay the Spire 2 in your terminal")
+    parser = argparse.ArgumentParser(
+        prog=CLI_COMMAND,
+        description="Play Slay the Spire 2 in your terminal",
+    )
     parser.add_argument("--auto", action="store_true", help="Auto-play with simple AI")
     parser.add_argument("--seed", type=str, default=None, help="Random seed")
     parser.add_argument("--character", type=str, default="Ironclad",
@@ -2242,11 +2282,8 @@ if __name__ == "__main__":
             parser.error("Cannot combine --save-info with --continue")
 
     if args.save_info is not None:
-        p = args.save_info
-        if not os.path.isabs(p):
-            p = os.path.join(ROOT, p)
-        if not os.path.isfile(p):
-            print(f"Save file not found: {p}")
+        p = _resolve_input_path(args.save_info, "Save")
+        if p is None:
             sys.exit(1)
         show_native_save(p)
         sys.exit(0)
@@ -2262,29 +2299,23 @@ if __name__ == "__main__":
                 else:
                     print(f"  {s['file']}  {s['character']}  {t('seed','种子')}:{s['seed']}  {t('actions','步操作')}:{s['actions']}")
             print(f"{'─' * 50}")
-            print(f"  {t('Replay saves:','回放存档:')} python3 play.py --load saves/<file>")
-            print(f"  {t('Native saves:','原生存档:')} python3 play.py --continue saves/<file>")
+            print(f"  {t('Replay saves:','回放存档:')} {CLI_COMMAND} --load saves/<file>")
+            print(f"  {t('Native saves:','原生存档:')} {CLI_COMMAND} --continue saves/<file>")
         else:
             print(t("No saves found.", "没有找到存档。"))
         sys.exit(0)
 
     load_path = None
     if args.load:
-        p = args.load
-        if not os.path.isabs(p):
-            p = os.path.join(ROOT, p)
-        if not os.path.isfile(p):
-            print(f"Save file not found: {args.load}")
+        p = _resolve_input_path(args.load, "Replay save")
+        if p is None:
             sys.exit(1)
         load_path = p
 
     native_save_path = None
     if args.continue_save is not None:
-        native_save_path = args.continue_save
-        if not os.path.isabs(native_save_path):
-            native_save_path = os.path.join(ROOT, native_save_path)
-        if not os.path.isfile(native_save_path):
-            print(f"Save file not found: {native_save_path}")
+        native_save_path = _resolve_input_path(args.continue_save, "Native save")
+        if native_save_path is None:
             sys.exit(1)
         show_native_save(native_save_path)
 

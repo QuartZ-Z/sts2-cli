@@ -22,7 +22,7 @@ cd sts2-cli
 ./setup.sh      # copies DLLs from Steam → IL patches → builds
 ```
 
-Or just run `python3 python/play.py` — it auto-detects and sets up on first run.
+Or just run `python scripts/play.py` — it auto-detects and sets up on first run.
 
 To check the game path, required DLLs, and .NET SDK without copying, patching,
 or building anything:
@@ -43,7 +43,7 @@ the Spire 2 installation directory. Backslashes in JSON must be doubled:
 }
 ```
 
-`launch_args` accepts the same arguments as `python/play.py`, including
+`launch_args` accepts the same arguments as `scripts/play.py`, including
 `--lang`, `--character`, `--ascension`, `--seed`, `--auto`, and `--no-log`.
 Explicit command-line arguments and launcher menu choices take precedence.
 It may be either a command-line string or an array of tokens/argument fragments.
@@ -51,7 +51,7 @@ It may be either a command-line string or an array of tokens/argument fragments.
 ```powershell
 Copy-Item .\config.example.json .\config.json
 .\setup.ps1
-py -3 .\launch.py
+python .\launch.py
 ```
 
 The path can also be supplied without a config file:
@@ -66,6 +66,14 @@ Validation without changing files:
 .\setup.ps1 -ValidateOnly
 ```
 
+On Windows, use `python`, not `python3`; many Python installers do not create a
+`python3.exe` command. Native game saves end in `.save` (not `.sav`). To inspect
+the exact available filenames, run:
+
+```powershell
+python .\scripts\play.py --saves
+```
+
 For `setup.ps1`, path precedence is `-GameDir`, `STS2_GAME_DIR`, `config.json`,
 then platform auto-detection. Set `STS2_CLI_CONFIG` or pass `-ConfigPath` to
 use another config file.
@@ -73,10 +81,10 @@ use another config file.
 ## Play
 
 ```bash
-python3 python/play.py                        # interactive (Chinese)
-python3 python/play.py --lang en              # interactive (English)
-python3 python/play.py --ascension 10         # Ascension 10
-python3 python/play.py --character Silent      # play as Silent
+python scripts/play.py                        # interactive (Chinese)
+python scripts/play.py --lang en              # interactive (English)
+python scripts/play.py --ascension 10         # Ascension 10
+python scripts/play.py --character Silent     # play as Silent
 ```
 
 Type `help` in-game:
@@ -133,7 +141,7 @@ during combat. All names are in English.
 Every run is automatically logged to `logs/` as a JSONL file (one JSON per line), recording each game state and action with timestamps. Logs older than 7 days are cleaned up automatically.
 
 ```bash
-python3 python/play.py --no-log    # disable logging
+python scripts/play.py --no-log    # disable logging
 ```
 
 **When filing a bug report, please attach the relevant log file from `logs/`** — it contains the full step-by-step game state needed to reproduce the issue.
@@ -186,7 +194,7 @@ cd sts2-cli
 ./setup.sh      # 从 Steam 复制 DLL → IL patch → 编译
 ```
 
-或者直接运行 `python3 python/play.py`，首次会自动完成 setup。
+或者直接运行 `python scripts/play.py`，首次会自动完成 setup。
 
 仅检查游戏目录、所需 DLL 和 .NET SDK，不复制、不打补丁、不编译：
 
@@ -206,7 +214,7 @@ cd sts2-cli
 }
 ```
 
-`launch_args` 支持 `python/play.py` 的参数，例如 `--lang`、`--character`、
+`launch_args` 支持 `scripts/play.py` 的参数，例如 `--lang`、`--character`、
 `--ascension`、`--seed`、`--auto` 和 `--no-log`。显式命令行参数及启动器
 菜单中的选择优先级更高。它既可以写成完整命令行字符串，也可以写成参数
 分词或参数片段数组。
@@ -214,7 +222,7 @@ cd sts2-cli
 ```powershell
 Copy-Item .\config.example.json .\config.json
 .\setup.ps1
-py -3 .\launch.py
+python .\launch.py
 ```
 
 也可以直接通过参数指定路径：
@@ -229,6 +237,14 @@ py -3 .\launch.py
 .\setup.ps1 -ValidateOnly
 ```
 
+Windows 下请使用 `python`，不要使用 `python3`；许多 Windows Python
+安装不会提供 `python3.exe` 命令。游戏原生存档的扩展名是 `.save`，
+不是 `.sav`。可以使用以下命令查看准确的存档文件名：
+
+```powershell
+python .\scripts\play.py --saves
+```
+
 对于 `setup.ps1`，路径优先级为：`-GameDir`、`STS2_GAME_DIR`、
 `config.json`、平台自动检测。可通过 `STS2_CLI_CONFIG` 或
 `-ConfigPath` 指定其他位置的配置文件。
@@ -236,10 +252,10 @@ py -3 .\launch.py
 ## 玩
 
 ```bash
-python3 python/play.py                        # 中文交互模式
-python3 python/play.py --lang en              # English
-python3 python/play.py --ascension 10         # 渐进难度 10
-python3 python/play.py --character Silent      # 选择静默猎手
+python scripts/play.py                        # 中文交互模式
+python scripts/play.py --lang en              # English
+python scripts/play.py --ascension 10         # 渐进难度 10
+python scripts/play.py --character Silent     # 选择静默猎手
 ```
 
 游戏内输入 `help` 查看所有命令：
@@ -305,7 +321,7 @@ dotnet run --project src/Sts2Headless/Sts2Headless.csproj
 每局游戏会自动记录到 `logs/` 目录下的 JSONL 文件中，包含每一步的游戏状态和操作，附带时间戳。超过 7 天的旧日志会自动清理。
 
 ```bash
-python3 python/play.py --no-log    # 关闭日志
+python scripts/play.py --no-log    # 关闭日志
 ```
 
 **提交 bug 报告时，请附上 `logs/` 中对应的日志文件** — 它包含了复现问题所需的完整游戏步骤。

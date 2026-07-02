@@ -9,9 +9,9 @@ import json
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLAY_PATH = ROOT / "python" / "play.py"
+PLAY_PATH = ROOT / "scripts" / "play.py"
 
-sys.path.insert(0, str(ROOT / "python"))
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("play_module_for_tests", PLAY_PATH)
 play = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -26,6 +26,18 @@ def test_quit_save_defaults_to_save_dir(monkeypatch):
     assert path is not None
     assert path.startswith(play.SAVE_DIR)
     assert path.endswith(".save")
+
+
+def test_resolve_input_path_explains_sav_typo(tmp_path, capsys):
+    actual = tmp_path / "run.save"
+    actual.write_text("{}", encoding="utf-8")
+
+    result = play._resolve_input_path(str(tmp_path / "run.sav"), "Native save")
+
+    assert result is None
+    output = capsys.readouterr().out
+    assert str(actual) in output
+    assert ".save extension, not .sav" in output
 
 
 def test_configured_game_dir_is_preferred(tmp_path, monkeypatch):

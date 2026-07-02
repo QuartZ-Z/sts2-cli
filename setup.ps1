@@ -111,4 +111,4 @@ Write-Host "Building sts2-cli..."
 if ($LASTEXITCODE -ne 0) { throw "Build failed." }
 
 Write-Host ""
-Write-Host "Setup complete. Start with: py -3 .\launch.py"
+Write-Host "Setup complete. Start with: python .\launch.py"

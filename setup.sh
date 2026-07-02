@@ -123,4 +123,4 @@ echo "Building sts2-cli..."
 "$DOTNET" build src/Sts2Headless/Sts2Headless.csproj
 
 echo "Setup complete."
-echo "To play: python3 python/play.py"
+echo "To play: python scripts/play.py"

@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Validate learning files: line count + card/enemy name verification.
 
-Usage: python3 agent/validate_learning.py <file>
+Usage: python agent/validate_learning.py <file>
 Exit 0 = pass, Exit 1 = fail (prints errors to stderr)
 """
 import json, sys, os, re

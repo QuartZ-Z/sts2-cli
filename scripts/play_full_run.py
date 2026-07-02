@@ -1,17 +1,17 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Play a full STS2 run using the headless simulator with a random agent.
 
 Usage:
-  python3 play_full_run.py <num_runs> [character]
+  python scripts/play_full_run.py <num_runs> [character]
 
 Arguments:
   num_runs    Positive integer: number of runs to play
   character   One of: Ironclad, Silent, Defect, Regent, Necrobinder (default: Ironclad)
 
 Examples:
-  python3 play_full_run.py 5
-  python3 play_full_run.py 3 Silent
+  python scripts/play_full_run.py 5
+  python scripts/play_full_run.py 3 Silent
 """
 
 import argparse

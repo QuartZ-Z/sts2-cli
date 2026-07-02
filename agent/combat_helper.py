@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Combat helper: auto-plays one combat encounter."""
 import json, sys, urllib.request
 
